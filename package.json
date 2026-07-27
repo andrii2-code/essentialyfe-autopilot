@@ -1,0 +1,20 @@
+{
+  "name": "essentialyfe-sourcing-autopilot",
+  "version": "1.0.0",
+  "description": "EssentiaLyfe · Sourcing Autopilot — real-estate sourcing + AI extraction + image pipeline + Drive delivery",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "collect": "node -e \"require('./src/pipeline').runCollector({limitPerSpec:10}).then(r=>console.log(r))\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^4.22.2",
+    "googleapis": "^144.0.0",
+    "sharp": "^0.34.5"
+  }
+}

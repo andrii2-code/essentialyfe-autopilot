@@ -1,0 +1,16 @@
+node_modules/
+
+# Local runtime data — DB, downloaded/processed images, logs, screenshots.
+# The app recreates these on run; they should never be committed.
+data/
+
+# Secrets — never commit
+.env
+*.env
+
+# Logs
+*.log
+
+# Local scratch / experiments
+_probe/
+scripts/

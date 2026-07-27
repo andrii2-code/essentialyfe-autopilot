@@ -1,0 +1,9 @@
+node_modules/
+data/*.db
+data/server.log
+data/shots/
+data/img-test/
+_probe/
+scripts/
+*.log
+.git/

@@ -6,7 +6,11 @@ const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 const fs = require('fs');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+// DB_DIR lets the host point the database at a persistent volume. On Railway,
+// attach a volume mounted at (e.g.) /data and set DB_DIR=/data — otherwise a
+// redeploy/restart wipes the container disk and the database resets to empty.
+// Falls back to the local ./data dir for development.
+const DATA_DIR = process.env.DB_DIR || path.join(__dirname, '..', 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(path.join(DATA_DIR, 'essentialyfe.db'));
 

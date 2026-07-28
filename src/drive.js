@@ -53,8 +53,40 @@ function withTimeout(promise, ms, label) {
 
 const DRIVE_OP_TIMEOUT = +(process.env.DRIVE_OP_TIMEOUT_MS || 20000);
 
+// Build the folder name the way the client names his properties:
+//   "The {StreetName} | {beds}bd | {baths}ba | {sqft}sqft"
+// e.g. "10644 Bellagio Rd" + 8bd/11ba/20000 -> "The Bellagio | 8bd | 11ba | 20,000sqft".
+// The street NAME is the core word(s): drop the leading house number and only the
+// TRAILING road-type suffix (Rd/Dr/Way/Ln/Blvd/Ave/…). We intentionally do NOT strip
+// "Canyon" — it is part of real LA street names (Stone Canyon, Laurel Canyon), so we
+// only remove a road type when it is the LAST token. Beds/baths/sqft appended when known.
+const ROAD_TYPE = /^(rd|road|dr|drive|way|ln|lane|blvd|boulevard|ave|avenue|st|street|ct|court|pl|place|ter|terrace|cir|circle|pkwy|parkway|hwy|highway|trl|trail|cyn)$/i;
+const DIRECTION = /^(n|s|e|w|ne|nw|se|sw|north|south|east|west)$/i;
+
+function streetName(listing) {
+  let s = listing.street_line || listing.streetLine || listing.address || '';
+  s = s.split(',')[0];                       // "10644 Bellagio Rd" (drop city/state/zip)
+  s = s.replace(/^\s*\d+\s*/, '');           // drop the leading house number
+  s = s.replace(/\b(apt|unit|#)\s*\S+/gi, ''); // drop unit markers
+  let tokens = s.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length && ROAD_TYPE.test(tokens[tokens.length - 1])) tokens.pop(); // trailing road type only
+  if (tokens.length > 1 && DIRECTION.test(tokens[0])) tokens.shift();           // leading N/S/E/W
+  return tokens.join(' ') || null;
+}
+
+function propertyFolderName(listing) {
+  const name = streetName(listing);
+  if (!name) return listing.address || listing.title || 'Property';
+  const parts = [`The ${name}`];
+  if (listing.beds != null) parts.push(`${listing.beds}bd`);
+  const ba = listing.baths ?? listing.full_baths;
+  if (ba != null) parts.push(`${ba}ba`);
+  if (listing.sqft != null) parts.push(`${Number(listing.sqft).toLocaleString('en-US')}sqft`);
+  return parts.join(' | ');
+}
+
 async function deliverToDrive(listing, processedImages) {
-  const folderName = listing.address || listing.title;
+  const folderName = propertyFolderName(listing);
   const manifest = processedImages.map((im, i) => ({
     name: `${String(i + 1).padStart(2, '0')}_${(im.tag || 'photo').toLowerCase().replace(/\W+/g, '-')}.jpg`,
     tag: im.tag, bytes: im.bytes,

@@ -86,19 +86,56 @@ async function detectBottomWatermark(buf) {
   return { detected, region: { left: 0, top: bandTop, width: W, height: bandH } };
 }
 
+// The realtor.com / MLS feed stamps a small "THE MLS.com" logo in the BOTTOM-RIGHT
+// corner of nearly every photo. It is a fixed-position corner mark, not a full-width
+// strip, so the band test above never catches it. We remove it by mirroring the
+// texture immediately to its left into the corner and feathering the seam — this
+// continues grass/foliage/sky naturally rather than leaving a blurred patch, and is
+// safe to apply even when no logo is present (it just extends neighbouring texture).
+async function removeCornerLogo(buf) {
+  const meta = await sharp(buf, { failOn: 'none' }).metadata();
+  const W = meta.width, H = meta.height;
+  const bw = Math.round(W * 0.17), bh = Math.round(H * 0.12);
+  const bx = W - bw, by = H - bh;
+  // mirror the strip just left of the logo box so texture flows into the corner
+  const mirror = await sharp(buf, { failOn: 'none' })
+    .extract({ left: Math.max(0, bx - bw), top: by, width: bw, height: bh })
+    .flop()
+    .toBuffer();
+  // feather the left edge with an alpha gradient so there is no hard seam
+  const mask = Buffer.from(
+    `<svg width="${bw}" height="${bh}"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0">` +
+    `<stop offset="0" stop-color="white" stop-opacity="0"/>` +
+    `<stop offset="0.35" stop-color="white" stop-opacity="1"/></linearGradient></defs>` +
+    `<rect width="${bw}" height="${bh}" fill="url(#g)"/></svg>`
+  );
+  const feathered = await sharp(mirror).ensureAlpha()
+    .composite([{ input: mask, blend: 'dest-in' }]).png().toBuffer();
+  return sharp(buf, { failOn: 'none' })
+    .composite([{ input: feathered, left: bx, top: by }])
+    .toBuffer();
+}
+
 async function removeWatermark(buf) {
   const { detected, region } = await detectBottomWatermark(buf);
-  if (!detected) return { buf, region: null, detected: false };
-  // reconstruct the band by stretching the clean rows just above it down over it
-  const patchSrc = await sharp(buf, { failOn: 'none' })
-    .extract({ left: 0, top: Math.max(0, region.top - 6), width: region.width, height: 6 })
-    .resize(region.width, region.height, { fit: 'fill' })
-    .blur(6)
-    .toBuffer();
-  const cleaned = await sharp(buf, { failOn: 'none' })
-    .composite([{ input: patchSrc, left: region.left, top: region.top }])
-    .toBuffer();
-  return { buf: cleaned, region, detected: true };
+  let out = buf;
+  let bandRemoved = false;
+  if (detected) {
+    // reconstruct the band by stretching the clean rows just above it down over it
+    const patchSrc = await sharp(buf, { failOn: 'none' })
+      .extract({ left: 0, top: Math.max(0, region.top - 6), width: region.width, height: 6 })
+      .resize(region.width, region.height, { fit: 'fill' })
+      .blur(6)
+      .toBuffer();
+    out = await sharp(buf, { failOn: 'none' })
+      .composite([{ input: patchSrc, left: region.left, top: region.top }])
+      .toBuffer();
+    bandRemoved = true;
+  }
+  // Always clear the fixed bottom-right MLS corner logo (mirror-inpaint is safe on
+  // clean corners too). This is what actually strips the "THE MLS.com" stamp.
+  out = await removeCornerLogo(out);
+  return { buf: out, region: detected ? region : null, detected: true, bandRemoved, cornerCleared: true };
 }
 
 // ---- point 14: blur any address VISIBLE in a photo (privacy). "Visible" is the
@@ -205,10 +242,11 @@ async function processImage(url, index, amenities, seenHashes, realTag = null) {
   const tag = realTag || tagForIndex(index, amenities);
   const final = await resizeToTarget(b.buf);
 
-  // steps reflect what ACTUALLY happened — watermark/address steps appear only
-  // when something was detected and processed, not on every image.
+  // steps reflect what ACTUALLY happened. The MLS corner logo is cleared on every
+  // photo; the full-width band strip and address blur are conditional on detection.
   const steps = ['downloaded'];
-  if (w.detected) steps.push('watermark-removed');
+  if (w.bandRemoved) steps.push('watermark-strip-removed');
+  if (w.cornerCleared) steps.push('mls-logo-removed');
   if (b.detected) steps.push('address-blurred');
   steps.push(`tagged:${tag}`, `resized:${TARGET.width}x${TARGET.height}`);
 
@@ -216,7 +254,8 @@ async function processImage(url, index, amenities, seenHashes, realTag = null) {
     skipped: false,
     tag,
     quality,
-    watermarkRemoved: w.detected,
+    watermarkRemoved: w.bandRemoved,
+    mlsLogoRemoved: w.cornerCleared,
     addressBlurred: b.detected,
     bytes: final.bytes,
     jpegQuality: final.quality,

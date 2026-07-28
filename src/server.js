@@ -57,14 +57,6 @@ app.post('/api/collect', async (req, res) => {
 // ---- reset (demo convenience) ----
 app.post('/api/reset', (req, res) => { q.clearAll(); res.json({ ok: true }); });
 
-// ---- TEMP: tag diagnostic (remove after verifying the vague-tag fix) ----
-app.get('/api/_diagtags', async (req, res) => {
-  try {
-    const { diagTags } = require('./realtor');
-    res.json(await diagTags(req.query.spec, req.query.loc));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 // On boot, if the queue is empty, pull a first real batch so the live app is
 // never blank. Runs in the background; the collector also runs on demand + could
 // be put on a cron for the "all-day" behaviour.

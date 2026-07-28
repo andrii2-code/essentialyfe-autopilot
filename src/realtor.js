@@ -213,24 +213,4 @@ async function collect({ specs = ['for-sale', 'sold', 'for-rent'], limitPerSpec 
   return out;
 }
 
-// TEMP diagnostic: fetch one listing and return each photo's RAW ranked tags plus
-// what old (top-only) vs new (best-of-ranked) tagging produces. Used to confirm the
-// vague-tag fix actually improves labels on live data. Safe to remove afterwards.
-async function diagTags(spec = 'for-sale', loc = 'Beverly Hills, CA') {
-  const listings = await fetchSpec(loc, spec, 5);
-  const withPhotos = listings.find((l) => Array.isArray(l.photos) && l.photos.length >= 8);
-  if (!withPhotos) return { error: 'no listing with photos' };
-  const rows = withPhotos.photos.slice(0, 25).map((p, i) => {
-    const ranked = (p.tags || []).map((t) => `${t.label}:${(t.probability ?? 0).toFixed(2)}`);
-    return {
-      i,
-      old: roomFromLabel(p.tags?.[0]?.label),
-      new: bestRoomTag(p),
-      ranked,
-    };
-  });
-  const improved = rows.filter((r) => r.old !== r.new);
-  return { address: withPhotos.location?.address?.line, photoCount: withPhotos.photos.length, improvedCount: improved.length, rows };
-}
-
-module.exports = { collect, normalize, fullSize, diagTags, bestRoomTag, roomFromLabel };
+module.exports = { collect, normalize, fullSize, bestRoomTag, roomFromLabel };

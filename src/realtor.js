@@ -56,6 +56,26 @@ function roomFromLabel(label) {
   return LABEL_ROOM[label] || label.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
+// Labels that are too generic to describe the photo ("Interior" tells you nothing
+// about which room). When the top label is one of these but a lower-ranked label is
+// specific, we prefer the specific one so the filename actually names the room.
+const VAGUE_ROOMS = new Set(['Interior', 'Exterior', 'View', 'Other', 'Unknown']);
+
+// realtor.com gives each photo a ranked tags[] list ([{label, probability}, …]).
+// Pick the best HUMAN room name: walk the ranked labels and take the first specific
+// one; only fall back to a vague label if nothing specific is offered at all.
+function bestRoomTag(photo) {
+  const tags = Array.isArray(photo?.tags) ? photo.tags : [];
+  let vagueFallback = null;
+  for (const t of tags) {
+    const room = roomFromLabel(t?.label);
+    if (!room) continue;
+    if (!VAGUE_ROOMS.has(room)) return room;      // first specific label wins
+    if (!vagueFallback) vagueFallback = room;      // remember the best vague one
+  }
+  return vagueFallback;                            // null if the photo had no tags
+}
+
 async function fetchSpec(location, spec, limit = 20) {
   if (!KEY) throw new Error('RAPIDAPI_KEY not set');
   const ep = SPEC_ENDPOINT[spec] || 'for-sale';
@@ -94,8 +114,9 @@ function normalize(l, spec) {
   const beds = de.beds ?? null;
   const price = spec === 'sold' ? (de.sold_price ?? l.list_price ?? null) : (l.list_price ?? null);
   // Keep each photo's REAL per-photo AI room label so filenames match content.
+  // Use the best (most specific) of the photo's ranked labels, not just the first.
   const photos = Array.isArray(l.photos)
-    ? l.photos.map((p) => ({ url: fullSize(p.href), tag: roomFromLabel(p.tags?.[0]?.label) })).filter((p) => p.url)
+    ? l.photos.map((p) => ({ url: fullSize(p.href), tag: bestRoomTag(p) })).filter((p) => p.url)
     : [];
   const amenities = Array.isArray(l.tags) ? l.tags.slice(0, 24).map(humanizeTag) : [];
 
@@ -184,4 +205,24 @@ async function collect({ specs = ['for-sale', 'sold', 'for-rent'], limitPerSpec 
   return out;
 }
 
-module.exports = { collect, normalize, fullSize };
+// TEMP diagnostic: fetch one listing and return each photo's RAW ranked tags plus
+// what old (top-only) vs new (best-of-ranked) tagging produces. Used to confirm the
+// vague-tag fix actually improves labels on live data. Safe to remove afterwards.
+async function diagTags(spec = 'for-sale', loc = 'Beverly Hills, CA') {
+  const listings = await fetchSpec(loc, spec, 5);
+  const withPhotos = listings.find((l) => Array.isArray(l.photos) && l.photos.length >= 8);
+  if (!withPhotos) return { error: 'no listing with photos' };
+  const rows = withPhotos.photos.slice(0, 25).map((p, i) => {
+    const ranked = (p.tags || []).map((t) => `${t.label}:${(t.probability ?? 0).toFixed(2)}`);
+    return {
+      i,
+      old: roomFromLabel(p.tags?.[0]?.label),
+      new: bestRoomTag(p),
+      ranked,
+    };
+  });
+  const improved = rows.filter((r) => r.old !== r.new);
+  return { address: withPhotos.location?.address?.line, photoCount: withPhotos.photos.length, improvedCount: improved.length, rows };
+}
+
+module.exports = { collect, normalize, fullSize, diagTags, bestRoomTag, roomFromLabel };

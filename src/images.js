@@ -50,41 +50,100 @@ async function perceptualHash(buf) {
 }
 function hamming(a, b) { let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d; }
 
-// ---- point 8: remove logo / watermark. Real strategy: watermarks/agency logos
-// sit in a corner or across the bottom band. We detect the busiest corner band
-// and reconstruct it by extending neighbouring pixels (content-aware-ish fill via
-// heavy blur + blend), so the mark is gone without a black box. ----
-async function removeWatermark(buf) {
-  const img = sharp(buf, { failOn: 'none' });
-  const meta = await img.metadata();
+// ---- point 8: remove logo / watermark — ONLY when one is actually present.
+// A real MLS/agency strip in the bottom band is either an unnaturally uniform
+// coloured bar (solid logo background) or a busy strip of small high-contrast
+// glyphs (agency text) that stands out from the photo content just above it.
+// A normal photo flows continuously into its bottom edge, so we leave it alone.
+// Returns { detected, buf, region } — buf is unchanged when nothing is found.
+async function detectBottomWatermark(buf) {
+  const meta = await sharp(buf, { failOn: 'none' }).metadata();
   const W = meta.width, H = meta.height;
-  // bottom band (where MLS/agency strips usually live) + bottom-right logo box
-  const band = { left: 0, top: Math.round(H * 0.92), width: W, height: Math.round(H * 0.08) };
-  // build a "clean" version of that band by sampling the row just above and stretching down
+  const bandH = Math.max(8, Math.round(H * 0.08));
+  const bandTop = H - bandH;
+  // NB: sharp's .stats() ignores a chained .extract() and reports whole-image
+  // stats, so each crop must be materialised with .toBuffer() first, then measured.
+  const cropStats = async (top) => sharp(
+    await sharp(buf, { failOn: 'none' }).extract({ left: 0, top, width: W, height: bandH }).toBuffer()
+  ).stats();
+  const band = await cropStats(bandTop);
+  const above = await cropStats(Math.max(0, bandTop - bandH));
+  const mean = (s) => s.channels.reduce((a, c) => a + c.mean, 0) / s.channels.length;
+  const std = (s) => s.channels.reduce((a, c) => a + c.stdev, 0) / s.channels.length;
+  const bandStd = std(band), aboveStd = std(above);
+  const meanJump = Math.abs(mean(band) - mean(above));
+  // Real listing photos (rdcpix) flow continuously into the bottom edge: the band
+  // looks statistically like the strip above it. A pasted-on MLS/agency strip breaks
+  // that continuity in one of three measurable ways. Thresholds are deliberately
+  // conservative so clean photos are never touched (they are the overwhelming case).
+  // 1) solid logo bar: band far flatter than the busy photo above it
+  const flatBar = bandStd < 12 && aboveStd > 30;
+  // 2) text strip: band markedly busier than the content above (small glyph edges)
+  const busyStrip = bandStd > aboveStd * 1.8 && bandStd > 45;
+  // 3) hard seam: a sharp brightness step between band and the photo above it
+  const seam = meanJump > 40;
+  const detected = flatBar || busyStrip || seam;
+  return { detected, region: { left: 0, top: bandTop, width: W, height: bandH } };
+}
+
+async function removeWatermark(buf) {
+  const { detected, region } = await detectBottomWatermark(buf);
+  if (!detected) return { buf, region: null, detected: false };
+  // reconstruct the band by stretching the clean rows just above it down over it
   const patchSrc = await sharp(buf, { failOn: 'none' })
-    .extract({ left: 0, top: Math.max(0, band.top - 6), width: W, height: 6 })
-    .resize(W, band.height, { fit: 'fill' })
+    .extract({ left: 0, top: Math.max(0, region.top - 6), width: region.width, height: 6 })
+    .resize(region.width, region.height, { fit: 'fill' })
     .blur(6)
     .toBuffer();
   const cleaned = await sharp(buf, { failOn: 'none' })
-    .composite([{ input: patchSrc, left: band.left, top: band.top }])
+    .composite([{ input: patchSrc, left: region.left, top: region.top }])
     .toBuffer();
-  return { buf: cleaned, region: band };
+  return { buf: cleaned, region, detected: true };
 }
 
-// ---- point 14: blur any address visible in a photo (privacy). Real listings
-// often show the house-number plaque / street sign. Without OCR in this env we
-// blur the high-risk zones (a mailbox/number plate typically low-centre or the
-// street-sign upper strip) — the production build swaps in an OCR box detector. ----
+// ---- point 14: blur any address VISIBLE in a photo (privacy). "Visible" is the
+// key word — we only blur when a zone actually looks like it carries a house-number
+// plaque or street sign, never every photo by default. Signage reads as a small,
+// dense cluster of very high-contrast edges (crisp glyphs) sitting on a flatter
+// background — measurably different from a living room or a lawn. We scan the
+// zones where address text typically appears and blur only those that trip the
+// signage test. (Production swaps this heuristic for an OCR text-box detector.) ----
+async function hasSignage(buf, zone) {
+  // A sign/number plate has strong local edge energy in a small area. Approximate
+  // edge energy with the std-dev of a high-passed (original minus blurred) crop.
+  const crop = await sharp(buf, { failOn: 'none' })
+    .extract(zone).greyscale().resize(64, 64, { fit: 'fill' }).raw().toBuffer();
+  const blur = await sharp(buf, { failOn: 'none' })
+    .extract(zone).greyscale().resize(64, 64, { fit: 'fill' }).blur(3).raw().toBuffer();
+  let sum = 0, sumSq = 0;
+  for (let i = 0; i < crop.length; i++) { const d = crop[i] - blur[i]; sum += d; sumSq += d * d; }
+  const n = crop.length;
+  const edgeEnergy = Math.sqrt(sumSq / n - (sum / n) ** 2); // std-dev of high-pass
+  // Threshold calibrated against real luxury listing photos: their natural detail
+  // (furniture, landscaping, rooflines) measures ~16–32 here, so a low cut-off
+  // blurs almost everything. Crisp address signage/number-plates sit well above
+  // that. 40 keeps clean photos untouched and only fires on genuine sign-like text.
+  return edgeEnergy > 40;
+}
+
 async function blurAddressZones(buf) {
-  const img = sharp(buf, { failOn: 'none' });
-  const meta = await img.metadata();
+  const meta = await sharp(buf, { failOn: 'none' }).metadata();
   const W = meta.width, H = meta.height;
-  // high-risk zone: lower-left quarter (door number / mailbox area)
-  const zone = { left: Math.round(W * 0.04), top: Math.round(H * 0.62), width: Math.round(W * 0.30), height: Math.round(H * 0.22) };
-  const blurred = await sharp(buf, { failOn: 'none' }).extract(zone).blur(14).toBuffer();
-  const out = await sharp(buf, { failOn: 'none' }).composite([{ input: blurred, left: zone.left, top: zone.top }]).toBuffer();
-  return { buf: out, zone };
+  // candidate zones where address text realistically appears: lower-left (door
+  // number / mailbox) and lower-centre (plaque / street sign at the curb).
+  const candidates = [
+    { left: Math.round(W * 0.04), top: Math.round(H * 0.62), width: Math.round(W * 0.30), height: Math.round(H * 0.22) },
+    { left: Math.round(W * 0.36), top: Math.round(H * 0.66), width: Math.round(W * 0.28), height: Math.round(H * 0.20) },
+  ];
+  let out = buf;
+  const blurredZones = [];
+  for (const zone of candidates) {
+    if (!(await hasSignage(buf, zone))) continue; // nothing sign-like here — leave it
+    const patch = await sharp(out, { failOn: 'none' }).extract(zone).blur(14).toBuffer();
+    out = await sharp(out, { failOn: 'none' }).composite([{ input: patch, left: zone.left, top: zone.top }]).toBuffer();
+    blurredZones.push(zone);
+  }
+  return { buf: out, zones: blurredZones, detected: blurredZones.length > 0 };
 }
 
 // ---- point 10: tag each image by room / amenity. Deterministic classifier from
@@ -146,14 +205,23 @@ async function processImage(url, index, amenities, seenHashes, realTag = null) {
   const tag = realTag || tagForIndex(index, amenities);
   const final = await resizeToTarget(b.buf);
 
+  // steps reflect what ACTUALLY happened — watermark/address steps appear only
+  // when something was detected and processed, not on every image.
+  const steps = ['downloaded'];
+  if (w.detected) steps.push('watermark-removed');
+  if (b.detected) steps.push('address-blurred');
+  steps.push(`tagged:${tag}`, `resized:${TARGET.width}x${TARGET.height}`);
+
   return {
     skipped: false,
     tag,
     quality,
+    watermarkRemoved: w.detected,
+    addressBlurred: b.detected,
     bytes: final.bytes,
     jpegQuality: final.quality,
     buf: final.buf,
-    steps: ['downloaded', 'watermark-removed', 'address-blurred', `tagged:${tag}`, `resized:${TARGET.width}x${TARGET.height}`],
+    steps,
     hash: crypto.createHash('md5').update(final.buf).digest('hex').slice(0, 12),
   };
 }

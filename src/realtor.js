@@ -61,19 +61,27 @@ function roomFromLabel(label) {
 // specific, we prefer the specific one so the filename actually names the room.
 const VAGUE_ROOMS = new Set(['Interior', 'Exterior', 'View', 'Other', 'Unknown']);
 
-// realtor.com gives each photo a ranked tags[] list ([{label, probability}, …]).
-// Pick the best HUMAN room name: walk the ranked labels and take the first specific
-// one; only fall back to a vague label if nothing specific is offered at all.
+// realtor.com gives each photo a tags[] list of {label, probability}. The list is
+// NOT reliably ordered by confidence — e.g. a photo can come back as
+// [door:0.75, patio:0.95, porch:0.75], where "door" is first but "patio" is the
+// confident call. So we rank by probability, and among the strong candidates prefer
+// a SPECIFIC room over a vague one ("Interior"). Only fall back to a vague label when
+// no specific label has meaningful confidence.
 function bestRoomTag(photo) {
-  const tags = Array.isArray(photo?.tags) ? photo.tags : [];
-  let vagueFallback = null;
-  for (const t of tags) {
-    const room = roomFromLabel(t?.label);
-    if (!room) continue;
-    if (!VAGUE_ROOMS.has(room)) return room;      // first specific label wins
-    if (!vagueFallback) vagueFallback = room;      // remember the best vague one
+  const tags = (Array.isArray(photo?.tags) ? photo.tags : [])
+    .map((t) => ({ room: roomFromLabel(t?.label), p: t?.probability ?? 0 }))
+    .filter((t) => t.room);
+  if (!tags.length) return null;
+
+  const specific = tags.filter((t) => !VAGUE_ROOMS.has(t.room)).sort((a, b) => b.p - a.p);
+  const vague = tags.filter((t) => VAGUE_ROOMS.has(t.room)).sort((a, b) => b.p - a.p);
+
+  // Take the most confident specific room if it is reasonably sure; otherwise, if the
+  // vague label is far more confident, keep the vague one (the photo really is ambiguous).
+  if (specific.length && (specific[0].p >= 0.5 || !vague.length || specific[0].p >= vague[0].p * 0.6)) {
+    return specific[0].room;
   }
-  return vagueFallback;                            // null if the photo had no tags
+  return (vague[0] || specific[0]).room;
 }
 
 async function fetchSpec(location, spec, limit = 20) {

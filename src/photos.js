@@ -41,16 +41,25 @@ function galleryUrls(listing) {
 //  1) realtor.com FULL gallery with REAL per-photo room tags
 //  2) real Redfin photos via groupCode (no per-photo tag → tag null)
 //  3) diverse license-free pool (per-listing-distinct) as a last resort
-function photosFor(listing, max = 12) {
-  const gallery = galleryUrls(listing);
-  if (gallery && gallery.length) return { source: 'realtor-real', items: gallery.slice(0, max) };
+//
+// We save the WHOLE real gallery per listing — the client's own folders carry
+// ~40 photos per property, and the realtor.com feed gives the full set (typically
+// 40–65). The per-image quality/dupe filter in the pipeline still drops bad or
+// repeated shots, so the final count is "all the good ones," not a fixed cap.
+// A hard ceiling only exists as a safety valve (DELIVER_MAX, default off).
+function photosFor(listing, max = null) {
+  const cap = max ?? (+process.env.DELIVER_MAX || 0); // 0 = no cap (deliver all)
+  const limit = (items) => cap > 0 ? items.slice(0, cap) : items;
 
-  const real = realRedfinPhotos(listing);
-  if (real && real.length) return { source: 'redfin-real', items: real.map((url) => ({ url, tag: null })) };
+  const gallery = galleryUrls(listing);
+  if (gallery && gallery.length) return { source: 'realtor-real', items: limit(gallery) };
+
+  const real = realRedfinPhotos(listing, cap > 0 ? cap : 60);
+  if (real && real.length) return { source: 'redfin-real', items: limit(real.map((url) => ({ url, tag: null }))) };
 
   const id = listing.id ?? listing.listing_id ?? listing.listingId ?? listing.address ?? '0';
   const n = listing.num_photos || listing.numPhotos || 7;
-  return { source: 'pool', items: pickImages(id, n, POOL).map((url) => ({ url, tag: null })) };
+  return { source: 'pool', items: limit(pickImages(id, n, POOL).map((url) => ({ url, tag: null }))) };
 }
 
 module.exports = { photosFor, realRedfinPhotos };

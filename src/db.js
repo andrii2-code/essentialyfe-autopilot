@@ -221,6 +221,17 @@ const q = {
   async deleteSession(token) {
     await pool.query(`DELETE FROM sessions WHERE token=$1`, [token]);
   },
+  async getUserById(id) {
+    const { rows } = await pool.query(`SELECT * FROM users WHERE id=$1`, [id]);
+    return rows[0] || null;
+  },
+  async updatePassword(userId, passHash) {
+    await pool.query(`UPDATE users SET pass_hash=$1 WHERE id=$2`, [passHash, userId]);
+  },
+  async deleteUserSessions(userId, keepToken) {
+    // invalidate all OTHER sessions after a password change (keep the current one)
+    await pool.query(`DELETE FROM sessions WHERE user_id=$1 AND token <> $2`, [userId, keepToken || '']);
+  },
 };
 
 module.exports = { pool, init, upsertListing, q };

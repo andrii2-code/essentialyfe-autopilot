@@ -64,6 +64,21 @@ app.get('/api/auth/me', wrap(async (req, res) => {
   res.json({ user: req.user || null, needsSetup: (await q.countUsers()) === 0 });
 }));
 
+// Change my own password. Requires the current password; on success it rotates
+// the hash and signs out every OTHER session (the current one stays valid).
+app.post('/api/auth/password', auth.requireAuth, wrap(async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'current and new password required' });
+  if (String(newPassword).length < 6) return res.status(400).json({ error: 'new password must be at least 6 characters' });
+  const user = await q.getUserById(req.user.id);
+  if (!user || !auth.verifyPassword(currentPassword, user.pass_hash)) {
+    return res.status(401).json({ error: 'current password is incorrect' });
+  }
+  await q.updatePassword(user.id, auth.hashPassword(newPassword));
+  await q.deleteUserSessions(user.id, req.sessionToken); // keep me signed in, drop others
+  res.json({ ok: true });
+}));
+
 // Admin: list / add team members.
 app.get('/api/auth/users', auth.requireAdmin, wrap(async (req, res) => {
   res.json(await q.listUsers());

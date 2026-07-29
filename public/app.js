@@ -357,8 +357,57 @@ async function logout() {
   location.reload();
 }
 
+// ---------- account (name display, change password, sign out) ----------
+function mountAccount(user) {
+  if (!user) return;
+  const nameEl = $('#acct-name'), roleEl = $('#acct-role');
+  if (nameEl) nameEl.textContent = user.name || user.email;
+  if (roleEl) roleEl.textContent = user.role === 'admin' ? 'Admin' : 'Member';
+  const lo = $('#acct-logout'); if (lo) lo.onclick = logout;
+  const pw = $('#acct-pw'); if (pw) pw.onclick = changePasswordDialog;
+}
+
+function changePasswordDialog() {
+  if ($('#pw-overlay')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'pw-overlay';
+  wrap.innerHTML = `
+    <div class="auth-card">
+      <div class="auth-brand">Change password</div>
+      <div class="auth-err" id="pw-err"></div>
+      <input id="pw-cur" class="auth-input" type="password" placeholder="Current password" autocomplete="current-password">
+      <input id="pw-new" class="auth-input" type="password" placeholder="New password (min 6)" autocomplete="new-password">
+      <input id="pw-new2" class="auth-input" type="password" placeholder="Confirm new password" autocomplete="new-password">
+      <button id="pw-save" class="auth-btn">Update password</button>
+      <a class="auth-link" id="pw-cancel">Cancel</a>
+    </div>`;
+  document.body.appendChild(wrap);
+  const err = (m) => { $('#pw-err').textContent = m || ''; };
+  const close = () => wrap.remove();
+  $('#pw-cancel').onclick = close;
+  wrap.onclick = (e) => { if (e.target.id === 'pw-overlay') close(); };
+  const save = async () => {
+    err('');
+    const currentPassword = $('#pw-cur').value, newPassword = $('#pw-new').value, confirm = $('#pw-new2').value;
+    if (!currentPassword || !newPassword) return err('Fill in every field.');
+    if (newPassword.length < 6) return err('New password must be at least 6 characters.');
+    if (newPassword !== confirm) return err('New passwords do not match.');
+    $('#pw-save').disabled = true;
+    try {
+      const r = await fetch('/api/auth/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentPassword, newPassword }) });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'Could not update password'); }
+      close();
+      alert('Password updated. Other devices have been signed out.');
+    } catch (e) { err(e.message); $('#pw-save').disabled = false; }
+  };
+  $('#pw-save').onclick = save;
+  wrap.querySelectorAll('.auth-input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') save(); }));
+  $('#pw-cur').focus();
+}
+
 // ---------- boot ----------
 async function startApp() {
+  try { const me = await (await fetch('/api/auth/me')).json(); mountAccount(me.user); } catch {}
   await renderDashboard();
   // poll while anything is processing so Processing → Ready updates live
   if (!window._eslPoll) {

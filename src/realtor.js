@@ -202,7 +202,9 @@ async function collect({ specs = ['for-sale', 'sold', 'for-rent'], limitPerSpec 
         if (kept >= limitPerSpec) break;
         const rec = normalize(l, spec);
         if (!passesSpec(rec)) continue;
-        const key = `${rec.streetLine}|${rec.city}|${rec.price}`;
+        // Identity = property (address), not price — matches the DB UNIQUE(street_line, city)
+        // so a re-listed home at a new price is still recognised as the same property.
+        const key = `${(rec.streetLine || '').toLowerCase().trim()}|${(rec.city || '').toLowerCase().trim()}`;
         if (seen.has(key)) continue;
         seen.add(key);
         out.push(rec);

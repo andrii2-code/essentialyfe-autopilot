@@ -40,7 +40,11 @@ CREATE TABLE IF NOT EXISTS listings (
   last_updated TEXT, days_on_market INTEGER,
   created_at TEXT DEFAULT (datetime('now')),
   approved_at TEXT, ready_at TEXT,
-  UNIQUE(street_line, city, price)
+  -- Identity is the PROPERTY (address), not the price. Luxury listings re-list and
+  -- change price often; keying on price would let a passed/approved home reappear as
+  -- "new" the moment its price moved. Keying on street_line + city keeps one row per
+  -- real property, so a home you already passed or delivered never comes back.
+  UNIQUE(street_line, city)
 );
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,7 +68,7 @@ function upsertListing(r) {
       is_redfin, photo_group_code, photo_positions, photo_urls,
       enriched_by, last_updated, days_on_market)
     VALUES (?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?, ?,?,?)
-    ON CONFLICT(street_line, city, price) DO NOTHING
+    ON CONFLICT(street_line, city) DO NOTHING
   `);
   const info = stmt.run(
     r.source, r.sourceUrl, r.mlsId, r.listingId != null ? String(r.listingId) : null, r.propertyId != null ? String(r.propertyId) : null, r.spec, 'in_review',

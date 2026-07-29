@@ -69,6 +69,23 @@ function init() {
         sourced INTEGER DEFAULT 0, kept INTEGER DEFAULT 0, note TEXT
       );
       CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
+
+      -- Auth: users + sessions. role is 'admin' (full access, e.g. the owner) or
+      -- 'member' (limited). Passwords are scrypt-hashed (salt:hash), never plain.
+      CREATE TABLE IF NOT EXISTS users (
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        name TEXT,
+        pass_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member',
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        expires_at TIMESTAMPTZ NOT NULL
+      );
     `);
   })();
   return readyPromise;
@@ -166,6 +183,43 @@ const q = {
   async clearAll() {
     await pool.query(`DELETE FROM listings`);
     await pool.query(`DELETE FROM runs`);
+  },
+
+  // ---- auth ----
+  async countUsers() {
+    const { rows } = await pool.query(`SELECT COUNT(*)::int n FROM users`);
+    return rows[0].n;
+  },
+  async createUser(email, name, passHash, role) {
+    const { rows } = await pool.query(
+      `INSERT INTO users (email, name, pass_hash, role) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (email) DO NOTHING RETURNING id, email, name, role`,
+      [email.toLowerCase().trim(), name || null, passHash, role || 'member']
+    );
+    return rows[0] || null;
+  },
+  async getUserByEmail(email) {
+    const { rows } = await pool.query(`SELECT * FROM users WHERE email=$1`, [email.toLowerCase().trim()]);
+    return rows[0] || null;
+  },
+  async listUsers() {
+    const { rows } = await pool.query(`SELECT id, email, name, role, created_at FROM users ORDER BY created_at`);
+    return rows;
+  },
+  async createSession(token, userId, expiresAt) {
+    await pool.query(`INSERT INTO sessions (token, user_id, expires_at) VALUES ($1,$2,$3)`, [token, userId, expiresAt]);
+  },
+  async getSessionUser(token) {
+    const { rows } = await pool.query(
+      `SELECT u.id, u.email, u.name, u.role FROM sessions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.token=$1 AND s.expires_at > now()`,
+      [token]
+    );
+    return rows[0] || null;
+  },
+  async deleteSession(token) {
+    await pool.query(`DELETE FROM sessions WHERE token=$1`, [token]);
   },
 };
 

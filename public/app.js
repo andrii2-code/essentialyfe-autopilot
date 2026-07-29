@@ -48,6 +48,7 @@ let state = { summary: null, queue: [], swipeIdx: 0 };
 
 async function api(path, opts) {
   const r = await fetch('/api' + path, opts ? { method: opts.method || 'GET', headers: { 'Content-Type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined } : undefined);
+  if (r.status === 401) { showAuth(); throw new Error('not authenticated'); }
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
@@ -310,14 +311,69 @@ function openDetail(l) {
   $('#detail-overlay').onclick = (ev) => { if (ev.target.id === 'detail-overlay') $('#detail-overlay').classList.add('hidden'); };
 }
 
+// ---------- auth gate ----------
+// Renders a full-screen login (or first-run "create owner account") over the app.
+// Called on boot and whenever any API call returns 401.
+let authShown = false;
+function showAuth(needsSetup = false) {
+  if (authShown) return;
+  authShown = true;
+  const wrap = document.createElement('div');
+  wrap.id = 'auth-overlay';
+  wrap.innerHTML = `
+    <div class="auth-card">
+      <div class="auth-brand">EssentiaLyfe</div>
+      <div class="auth-title">${needsSetup ? 'Create your owner account' : 'Sign in'}</div>
+      <div class="auth-err" id="auth-err"></div>
+      ${needsSetup ? '<input id="auth-name" class="auth-input" placeholder="Your name" autocomplete="name">' : ''}
+      <input id="auth-email" class="auth-input" type="email" placeholder="Email" autocomplete="username">
+      <input id="auth-pass" class="auth-input" type="password" placeholder="Password" autocomplete="${needsSetup ? 'new-password' : 'current-password'}">
+      <button id="auth-submit" class="auth-btn">${needsSetup ? 'Create account' : 'Sign in'}</button>
+    </div>`;
+  document.body.appendChild(wrap);
+  const err = (m) => { $('#auth-err').textContent = m || ''; };
+  const submit = async () => {
+    err('');
+    const email = $('#auth-email').value.trim();
+    const password = $('#auth-pass').value;
+    const name = needsSetup ? ($('#auth-name').value.trim()) : undefined;
+    if (!email || !password) return err('Email and password are required.');
+    $('#auth-submit').disabled = true;
+    try {
+      const path = needsSetup ? '/auth/register' : '/auth/login';
+      const r = await fetch('/api' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, name }) });
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || 'Sign in failed'); }
+      wrap.remove(); authShown = false;
+      await startApp();
+    } catch (e) { err(e.message); $('#auth-submit').disabled = false; }
+  };
+  $('#auth-submit').onclick = submit;
+  wrap.querySelectorAll('.auth-input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); }));
+  $('#auth-email').focus();
+}
+
+async function logout() {
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+  location.reload();
+}
+
 // ---------- boot ----------
-(async () => {
-  try {
-    await renderDashboard();
-    // poll while anything is processing so Processing → Ready updates live
-    setInterval(async () => {
+async function startApp() {
+  await renderDashboard();
+  // poll while anything is processing so Processing → Ready updates live
+  if (!window._eslPoll) {
+    window._eslPoll = setInterval(async () => {
       const active = document.querySelector('.nav-item.active')?.dataset.view;
       if (state.summary?.counts?.processing > 0 || active === 'processing') { await refreshSummary(); if (active === 'processing') renderProcessing(); if (active === 'database') renderDatabase(); }
     }, 2500);
-  } catch (e) { console.error(e); }
+  }
+}
+
+(async () => {
+  try {
+    const me = await (await fetch('/api/auth/me')).json();
+    if (me.needsSetup) return showAuth(true);   // first run → create owner
+    if (!me.user) return showAuth(false);        // not logged in → sign in
+    await startApp();                            // logged in → run the app
+  } catch (e) { console.error(e); showAuth(false); }
 })();

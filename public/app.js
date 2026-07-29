@@ -459,6 +459,7 @@ async function showResetForm(token) {
 }
 
 async function logout() {
+  hideApp(); // cover the shell before the reload so it can't flash on the way out
   try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
   location.reload();
 }
@@ -466,6 +467,16 @@ async function logout() {
 // ---------- account (name display, change password, sign out) ----------
 function mountAccount(user) {
   if (!user) return;
+  // Greet whoever is actually signed in — the markup ships a neutral "Welcome back."
+  // so no name is ever baked into the page, and team members don't get greeted as
+  // the owner.
+  const greet = $('#dash-greeting');
+  if (greet) {
+    const hour = new Date().getHours();
+    const part = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+    const first = (user.name || '').trim().split(/\s+/)[0];
+    greet.textContent = first ? `${part}, ${first}.` : `${part}.`;
+  }
   const nameEl = $('#acct-name'), roleEl = $('#acct-role');
   if (nameEl) nameEl.textContent = user.name || user.email;
   if (roleEl) roleEl.textContent = user.role === 'admin' ? 'Admin' : 'Member';
@@ -512,8 +523,20 @@ function changePasswordDialog() {
 }
 
 // ---------- boot ----------
+// Every authenticated entry point (boot, sign-in, finished reset) lands here, so
+// this is the one place that reveals the shell. Until it runs, #app is hidden by
+// the inline style in index.html — that's what stops the dashboard flashing behind
+// the login screen while /api/auth/me is still in flight.
+function revealApp() { document.documentElement.classList.add('auth-ready'); }
+function hideApp() { document.documentElement.classList.remove('auth-ready'); }
+
 async function startApp() {
-  try { const me = await (await fetch('/api/auth/me')).json(); mountAccount(me.user); } catch {}
+  let me = null;
+  try { me = await (await fetch('/api/auth/me')).json(); } catch {}
+  // Don't unveil on a failed/expired check — fall back to the login screen instead.
+  if (!me || !me.user) { hideApp(); return showAuth(!!me?.needsSetup); }
+  mountAccount(me.user);
+  revealApp();
   await renderDashboard();
   // poll while anything is processing so Processing → Ready updates live
   if (!window._eslPoll) {

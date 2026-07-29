@@ -2,7 +2,9 @@
 // needed; the same sender will carry the Milestone-2 daily digest.
 //
 // Configure with: SMTP_HOST, SMTP_PORT (587 STARTTLS or 465 implicit TLS),
-// SMTP_USER, SMTP_PASS, MAIL_FROM.
+// SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_FROM_NAME.
+// MAIL_FROM_NAME sets the display name recipients see ("EssentiaLyfe <addr>"), so a
+// plain Gmail sending account still reads as the product in an inbox.
 // If SMTP is not configured, send() does NOT throw — it logs the message and
 // reports delivered:false, so a password reset still works via the server log
 // (and, for the owner-recovery path, via the response) until SMTP is wired up.
@@ -16,13 +18,28 @@ function mailMode() {
     : 'log';
 }
 
+// The bare address used in the SMTP envelope (MAIL FROM). MAIL_FROM may carry a
+// display name — e.g. `EssentiaLyfe <bot@gmail.com>` — so strip it down to the
+// address here; the envelope must never include the display name.
 function fromAddress() {
-  return process.env.MAIL_FROM || process.env.SMTP_USER || 'no-reply@essentialyfe.app';
+  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'no-reply@essentialyfe.app';
+  const m = raw.match(/<([^>]+)>/);
+  return (m ? m[1] : raw).trim();
+}
+
+// What the recipient sees in the From line. Set MAIL_FROM_NAME to show a product
+// name instead of a bare address — an inbox then lists "EssentiaLyfe", not a
+// personal mailbox, which matters when the sending account is a plain Gmail.
+function fromHeader() {
+  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'no-reply@essentialyfe.app';
+  if (/</.test(raw)) return raw.trim(); // already "Name <addr>"
+  const name = process.env.MAIL_FROM_NAME;
+  return name ? `${name} <${fromAddress()}>` : fromAddress();
 }
 
 // Minimal SMTP conversation. Reads greeting/replies line-by-line and asserts the
 // expected 3-digit code at each step.
-function smtpSend({ host, port, user, pass, from, to, subject, text }) {
+function smtpSend({ host, port, user, pass, from, fromHdr, to, subject, text }) {
   return new Promise((resolve, reject) => {
     const implicitTls = Number(port) === 465;
     const socket = implicitTls
@@ -57,7 +74,7 @@ function smtpSend({ host, port, user, pass, from, to, subject, text }) {
     expect(250, `RCPT TO:<${to}>`);
     expect(354, 'DATA');
     const body = [
-      `From: ${from}`,
+      `From: ${fromHdr || from}`,
       `To: ${to}`,
       `Subject: ${subject}`,
       'MIME-Version: 1.0',
@@ -131,6 +148,7 @@ async function send({ to, subject, text }) {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
       from: fromAddress(),
+      fromHdr: fromHeader(),
       to, subject, text,
     });
     console.log(`[mail:sent] to=${to} subject="${subject}"`);
@@ -142,4 +160,4 @@ async function send({ to, subject, text }) {
   }
 }
 
-module.exports = { send, mailMode, fromAddress };
+module.exports = { send, mailMode, fromAddress, fromHeader };

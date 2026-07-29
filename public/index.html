@@ -6,6 +6,15 @@
 <title>EssentiaLyfe · Sourcing Autopilot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="./styles.css">
+<style>
+  /* The app shell stays hidden until the session is confirmed, so nothing behind
+     the login — not even the sidebar or the greeting — paints while /api/auth/me
+     is still in flight. app.js adds .auth-ready to <html> once a user is known.
+     Inlined (not in styles.css) so it applies on the very first paint even if the
+     stylesheet is still loading. */
+  #app { visibility: hidden; }
+  html.auth-ready #app { visibility: visible; }
+</style>
 </head>
 <body>
 <div id="app">
@@ -54,7 +63,7 @@
     <section class="view" id="view-dashboard">
       <div class="view-head">
         <div>
-          <h1 class="serif">Good morning, Avi.</h1>
+          <h1 class="serif" id="dash-greeting">Welcome back.</h1>
           <p class="lede" id="dash-lede">Autopilot is pulling real Los Angeles County listings across your three specs. Approve the ones you like — everything after that runs on its own.</p>
         </div>
         <button class="btn-primary" id="btn-start-review">Start morning review →</button>

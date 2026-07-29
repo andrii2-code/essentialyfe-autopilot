@@ -329,9 +329,12 @@ function showAuth(needsSetup = false) {
       <input id="auth-email" class="auth-input" type="email" placeholder="Email" autocomplete="username">
       <input id="auth-pass" class="auth-input" type="password" placeholder="Password" autocomplete="${needsSetup ? 'new-password' : 'current-password'}">
       <button id="auth-submit" class="auth-btn">${needsSetup ? 'Create account' : 'Sign in'}</button>
+      ${needsSetup ? '' : '<a class="auth-link" id="auth-forgot">Forgot password?</a>'}
     </div>`;
   document.body.appendChild(wrap);
   const err = (m) => { $('#auth-err').textContent = m || ''; };
+  const forgot = $('#auth-forgot');
+  if (forgot) forgot.onclick = () => { wrap.remove(); authShown = false; showForgot($('#auth-email')?.value.trim()); };
   const submit = async () => {
     err('');
     const email = $('#auth-email').value.trim();
@@ -350,6 +353,109 @@ function showAuth(needsSetup = false) {
   $('#auth-submit').onclick = submit;
   wrap.querySelectorAll('.auth-input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); }));
   $('#auth-email').focus();
+}
+
+// "Forgot password?" — ask for the email, then show the confirmation. If the server
+// has no email sender configured yet it hands back the link directly (owner recovery
+// key), so being locked out is never a dead end.
+function showForgot(prefillEmail = '') {
+  const wrap = document.createElement('div');
+  wrap.id = 'auth-overlay';
+  wrap.innerHTML = `
+    <div class="auth-card">
+      <div class="auth-brand">EssentiaLyfe</div>
+      <div class="auth-title">Reset your password</div>
+      <div class="auth-err" id="fg-err"></div>
+      <div class="auth-note">Enter the email you sign in with and we'll send a reset link.</div>
+      <input id="fg-email" class="auth-input" type="email" placeholder="Email" autocomplete="username" value="${prefillEmail || ''}">
+      <button id="fg-submit" class="auth-btn">Send reset link</button>
+      <a class="auth-link" id="fg-back">Back to sign in</a>
+    </div>`;
+  document.body.appendChild(wrap);
+  const err = (m) => { $('#fg-err').textContent = m || ''; };
+  $('#fg-back').onclick = () => { wrap.remove(); showAuth(false); };
+  const submit = async () => {
+    err('');
+    const email = $('#fg-email').value.trim();
+    if (!email) return err('Enter your email.');
+    $('#fg-submit').disabled = true;
+    try {
+      const r = await fetch('/api/auth/forgot', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Could not start the reset');
+      wrap.querySelector('.auth-card').innerHTML = `
+        <div class="auth-brand">EssentiaLyfe</div>
+        <div class="auth-title">Check your email</div>
+        <div class="auth-note">${d.message || 'If that email has an account, a reset link is on its way.'}
+          ${d.emailed === false ? '<br><br>If you don\'t receive it, ask your developer to send you the link — email delivery may not be switched on yet.' : ''}</div>
+        <a class="auth-link" id="fg-done">Back to sign in</a>`;
+      $('#fg-done').onclick = () => { wrap.remove(); showAuth(false); };
+    } catch (e) { err(e.message); $('#fg-submit').disabled = false; }
+  };
+  $('#fg-submit').onclick = submit;
+  $('#fg-email').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  $('#fg-email').focus();
+}
+
+// Landing on /?reset=TOKEN — validate the token, then take a new password.
+async function showResetForm(token) {
+  // Claim the auth overlay so a stray 401 elsewhere can't stack a sign-in card
+  // on top of the reset form mid-flow.
+  authShown = true;
+  const wrap = document.createElement('div');
+  wrap.id = 'auth-overlay';
+  document.body.appendChild(wrap);
+  const card = (inner) => { wrap.innerHTML = `<div class="auth-card">${inner}</div>`; };
+
+  card(`<div class="auth-brand">EssentiaLyfe</div><div class="auth-note">Checking your link…</div>`);
+  let check = { valid: false };
+  try { check = await (await fetch('/api/auth/reset/check?token=' + encodeURIComponent(token))).json(); } catch {}
+
+  const clean = () => history.replaceState(null, '', location.pathname);
+  if (!check.valid) {
+    card(`
+      <div class="auth-brand">EssentiaLyfe</div>
+      <div class="auth-title">Link expired</div>
+      <div class="auth-note">This reset link is no longer valid — they last one hour and work once. Request a new one.</div>
+      <a class="auth-link" id="rs-again">Back to sign in</a>`);
+    $('#rs-again').onclick = () => { clean(); wrap.remove(); authShown = false; showAuth(false); };
+    return;
+  }
+
+  card(`
+    <div class="auth-brand">EssentiaLyfe</div>
+    <div class="auth-title">Choose a new password</div>
+    <div class="auth-err" id="rs-err"></div>
+    <div class="auth-note">for ${check.email}</div>
+    <input id="rs-new" class="auth-input" type="password" placeholder="New password (min 6)" autocomplete="new-password">
+    <input id="rs-new2" class="auth-input" type="password" placeholder="Confirm new password" autocomplete="new-password">
+    <button id="rs-save" class="auth-btn">Set password and sign in</button>`);
+  const err = (m) => { $('#rs-err').textContent = m || ''; };
+  const save = async () => {
+    err('');
+    const newPassword = $('#rs-new').value, confirm = $('#rs-new2').value;
+    if (newPassword.length < 6) return err('Password must be at least 6 characters.');
+    if (newPassword !== confirm) return err('Passwords do not match.');
+    $('#rs-save').disabled = true;
+    try {
+      const r = await fetch('/api/auth/reset', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, newPassword }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Could not set the password');
+      clean();
+      wrap.remove();
+      authShown = false;
+      await startApp();
+    } catch (e) { err(e.message); $('#rs-save').disabled = false; }
+  };
+  $('#rs-save').onclick = save;
+  wrap.querySelectorAll('.auth-input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') save(); }));
+  $('#rs-new').focus();
 }
 
 async function logout() {
@@ -420,6 +526,10 @@ async function startApp() {
 
 (async () => {
   try {
+    // A reset link wins over everything else — he arrives here signed out.
+    const resetToken = new URLSearchParams(location.search).get('reset');
+    if (resetToken) return showResetForm(resetToken);
+
     const me = await (await fetch('/api/auth/me')).json();
     if (me.needsSetup) return showAuth(true);   // first run → create owner
     if (!me.user) return showAuth(false);        // not logged in → sign in

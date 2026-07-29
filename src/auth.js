@@ -77,9 +77,22 @@ async function bootstrapFirstAdminRole() {
   return (await q.countUsers()) === 0 ? 'admin' : 'member';
 }
 
+// ---- password reset tokens ----
+// The raw token goes to the user (in the link); only its hash is stored, so the
+// database never holds anything that can be replayed as a reset.
+const RESET_MINUTES = 60;
+function newResetToken() {
+  const token = crypto.randomBytes(32).toString('hex');
+  return { token, tokenHash: sha256(token) };
+}
+function sha256(s) {
+  return crypto.createHash('sha256').update(String(s)).digest('hex');
+}
+
 module.exports = {
-  COOKIE,
+  COOKIE, RESET_MINUTES,
   hashPassword, verifyPassword,
   issueSession, attachUser, requireAuth, requireAdmin,
   bootstrapFirstAdminRole,
+  newResetToken, sha256,
 };

@@ -86,6 +86,16 @@ function init() {
         created_at TIMESTAMPTZ DEFAULT now(),
         expires_at TIMESTAMPTZ NOT NULL
       );
+
+      -- Password resets: single-use, short-lived tokens. Only the SHA-256 of the
+      -- token is stored, so a database read cannot be replayed as a reset link.
+      CREATE TABLE IF NOT EXISTS password_resets (
+        token_hash TEXT PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        used_at TIMESTAMPTZ
+      );
     `);
   })();
   return readyPromise;
@@ -231,6 +241,37 @@ const q = {
   async deleteUserSessions(userId, keepToken) {
     // invalidate all OTHER sessions after a password change (keep the current one)
     await pool.query(`DELETE FROM sessions WHERE user_id=$1 AND token <> $2`, [userId, keepToken || '']);
+  },
+
+  // ---- password reset ----
+  // Any still-valid tokens for this user are dropped first, so the newest request
+  // is the only one that works (a second "forgot password" click voids the first).
+  async createPasswordReset(tokenHash, userId, expiresAt) {
+    await pool.query(`DELETE FROM password_resets WHERE user_id=$1 AND used_at IS NULL`, [userId]);
+    await pool.query(
+      `INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1,$2,$3)`,
+      [tokenHash, userId, expiresAt]
+    );
+  },
+  async getPasswordReset(tokenHash) {
+    const { rows } = await pool.query(
+      `SELECT pr.user_id, u.email FROM password_resets pr
+       JOIN users u ON u.id = pr.user_id
+       WHERE pr.token_hash=$1 AND pr.used_at IS NULL AND pr.expires_at > now()`,
+      [tokenHash]
+    );
+    return rows[0] || null;
+  },
+  async consumePasswordReset(tokenHash) {
+    const { rowCount } = await pool.query(
+      `UPDATE password_resets SET used_at = now()
+       WHERE token_hash=$1 AND used_at IS NULL AND expires_at > now()`,
+      [tokenHash]
+    );
+    return rowCount > 0; // false => already used or expired (race-safe)
+  },
+  async deleteAllUserSessions(userId) {
+    await pool.query(`DELETE FROM sessions WHERE user_id=$1`, [userId]);
   },
 };
 

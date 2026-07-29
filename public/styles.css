@@ -190,3 +190,5 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 #pw-overlay{position:fixed;inset:0;z-index:1001;background:rgba(15,27,45,.55);display:grid;place-items:center;padding:24px}
 .auth-link{color:var(--muted);font-size:13px;text-align:center;cursor:pointer;text-decoration:none}
 .auth-link:hover{color:var(--ink)}
+/* explanatory line inside the auth card (forgot / reset flows) */
+.auth-note{color:var(--muted);font-size:13px;line-height:1.5}

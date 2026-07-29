@@ -4,6 +4,7 @@ const { q, init } = require('./db');
 const { runCollector, processApproved } = require('./pipeline');
 const { driveMode } = require('./drive');
 const auth = require('./auth');
+const mailer = require('./mailer');
 
 const app = express();
 app.use(express.json());
@@ -79,9 +80,91 @@ app.post('/api/auth/password', auth.requireAuth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- forgot / reset password ----
+// Step 1: request a reset link. Always replies 200 with the same message whether or
+// not the email exists (so this cannot be used to discover who has an account).
+app.post('/api/auth/forgot', wrap(async (req, res) => {
+  const email = String(req.body?.email || '').toLowerCase().trim();
+  const generic = { ok: true, message: 'If that email has an account, a reset link is on its way.' };
+  if (!email) return res.status(400).json({ error: 'email required' });
+
+  const user = await q.getUserByEmail(email);
+  if (!user) return res.json(generic);
+
+  const { token, tokenHash } = auth.newResetToken();
+  const expires = new Date(Date.now() + auth.RESET_MINUTES * 60000);
+  await q.createPasswordReset(tokenHash, user.id, expires.toISOString());
+
+  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  const link = `${base}/?reset=${token}`;
+  const mail = await mailer.send({
+    to: user.email,
+    subject: 'Reset your EssentiaLyfe password',
+    text: `Someone asked to reset the password for this EssentiaLyfe account.\n\n`
+      + `Open this link to choose a new password (valid for ${auth.RESET_MINUTES} minutes, one use):\n${link}\n\n`
+      + `If this wasn't you, ignore this email — nothing has changed.`,
+  });
+
+  // Until SMTP is configured the link cannot be emailed. Rather than fail silently,
+  // return it directly IF the caller proves owner access with the recovery key
+  // (OWNER_RECOVERY_KEY env var). Without that key the response stays generic.
+  const key = process.env.OWNER_RECOVERY_KEY;
+  if (!mail.delivered && key && req.body?.recoveryKey === key) {
+    return res.json({ ...generic, emailed: false, resetUrl: link });
+  }
+  res.json({ ...generic, emailed: mail.delivered });
+}));
+
+// Step 2: check a token is still good (so the UI can show the form or an error).
+app.get('/api/auth/reset/check', wrap(async (req, res) => {
+  const rec = await q.getPasswordReset(auth.sha256(req.query.token || ''));
+  res.json({ valid: !!rec, email: rec?.email || null });
+}));
+
+// Step 3: set the new password. Consumes the token (single use) and signs out every
+// session for that user, so anyone holding the old password is logged out.
+app.post('/api/auth/reset', wrap(async (req, res) => {
+  const { token, newPassword } = req.body || {};
+  if (!token || !newPassword) return res.status(400).json({ error: 'token and new password required' });
+  if (String(newPassword).length < 6) return res.status(400).json({ error: 'new password must be at least 6 characters' });
+
+  const tokenHash = auth.sha256(token);
+  const rec = await q.getPasswordReset(tokenHash);
+  if (!rec) return res.status(400).json({ error: 'this reset link is invalid or has expired' });
+  // Consume first: if two requests race, only one wins.
+  if (!(await q.consumePasswordReset(tokenHash))) {
+    return res.status(400).json({ error: 'this reset link has already been used' });
+  }
+
+  await q.updatePassword(rec.user_id, auth.hashPassword(newPassword));
+  await q.deleteAllUserSessions(rec.user_id);
+  await auth.issueSession(res, rec.user_id); // log them straight in
+  const user = await q.getUserById(rec.user_id);
+  res.json({ ok: true, id: user.id, email: user.email, name: user.name, role: user.role });
+}));
+
 // Admin: list / add team members.
 app.get('/api/auth/users', auth.requireAdmin, wrap(async (req, res) => {
   res.json(await q.listUsers());
+}));
+
+// Admin: send a reset link to a team member who is locked out.
+app.post('/api/auth/users/:id/reset-link', auth.requireAdmin, wrap(async (req, res) => {
+  const user = await q.getUserById(+req.params.id);
+  if (!user) return res.status(404).json({ error: 'no such user' });
+  const { token, tokenHash } = auth.newResetToken();
+  await q.createPasswordReset(tokenHash, user.id, new Date(Date.now() + auth.RESET_MINUTES * 60000).toISOString());
+  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  const link = `${base}/?reset=${token}`;
+  const mail = await mailer.send({
+    to: user.email,
+    subject: 'Your EssentiaLyfe password reset',
+    text: `An admin started a password reset for your EssentiaLyfe account.\n\n`
+      + `Open this link to choose a new password (valid for ${auth.RESET_MINUTES} minutes):\n${link}`,
+  });
+  // An admin is already trusted, so hand back the link when email isn't wired up —
+  // that way they can pass it to the person directly.
+  res.json({ ok: true, emailed: mail.delivered, resetUrl: mail.delivered ? undefined : link });
 }));
 
 // Everything below requires a logged-in user. (Auth routes above are public.)

@@ -26,17 +26,17 @@ async function runCollector({ limitPerSpec = 12 } = {}) {
   let kept = 0;
   for (const r of recs) {
     const enriched = await enrich(r);
-    if (upsertListing(enriched)) kept++;
+    if (await upsertListing(enriched)) kept++;
   }
-  q.newRun(recs.length, kept, `collector: ${kept} new of ${recs.length}`);
+  await q.newRun(recs.length, kept, `collector: ${kept} new of ${recs.length}`);
   return { sourced: recs.length, kept };
 }
 
 // ---- on approval: run the image pipeline for real, then hand to Drive ----
 async function processApproved(id, onProgress = () => {}) {
-  const listing = q.get(id);
+  const listing = await q.get(id);
   if (!listing) throw new Error('listing not found');
-  q.setStatus(id, 'processing');
+  await q.setStatus(id, 'processing');
   onProgress({ stage: 'start', id });
 
   const amenities = listing.amenities || [];
@@ -67,7 +67,7 @@ async function processApproved(id, onProgress = () => {}) {
     steps: p.steps, quality: p.quality,
   }));
 
-  q.setStatus(id, 'ready', {
+  await q.setStatus(id, 'ready', {
     ready_at,
     drive_folder_id: delivery.folderId,
     drive_folder_url: delivery.folderUrl,

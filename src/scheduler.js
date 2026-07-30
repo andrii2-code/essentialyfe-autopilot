@@ -103,9 +103,14 @@ async function tick() {
 
 function start() {
   if (timer) return;
-  // An env var can force the collector on for a deployment without touching the DB.
-  if (String(process.env.COLLECTOR_ENABLED).toLowerCase() === 'true') {
-    q.setSetting('collector.enabled', true).catch(() => {});
+  // COLLECTOR_ENABLED can force the collector on or OFF at boot, overriding whatever is
+  // in the database. Explicit "false" matters as much as "true": it's the kill switch
+  // for a deployment that must not spend listing-API quota, whatever a stray write or a
+  // test against the shared database may have left in the settings row.
+  const envFlag = String(process.env.COLLECTOR_ENABLED || '').toLowerCase();
+  if (envFlag === 'true' || envFlag === 'false') {
+    q.setSetting('collector.enabled', envFlag === 'true').catch(() => {});
+    console.log(`[scheduler] COLLECTOR_ENABLED=${envFlag} — forcing the collector ${envFlag === 'true' ? 'on' : 'off'}`);
   }
   timer = setInterval(() => { tick().catch(() => {}); }, TICK_MS);
   if (timer.unref) timer.unref();  // don't hold a test process open

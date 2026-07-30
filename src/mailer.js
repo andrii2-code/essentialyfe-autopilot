@@ -1,40 +1,62 @@
-// Outbound email. Dependency-free SMTP client (net/tls) so no new package is
-// needed; the same sender will carry the Milestone-2 daily digest.
+// Outbound email — password resets now, the Milestone-2 daily digest next.
 //
-// Configure with: SMTP_HOST, SMTP_PORT (587 STARTTLS or 465 implicit TLS),
-// SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_FROM_NAME.
-// MAIL_FROM_NAME sets the display name recipients see ("EssentiaLyfe <addr>"), so a
-// plain Gmail sending account still reads as the product in an inbox.
-// If SMTP is not configured, send() does NOT throw — it logs the message and
-// reports delivered:false, so a password reset still works via the server log
-// (and, for the owner-recovery path, via the response) until SMTP is wired up.
+// Two delivery routes, tried in this order:
+//   1. Resend  — set RESEND_API_KEY. Sends over HTTPS from a domain verified in
+//      Resend (essentialyfehub1.com), so SPF/DKIM pass and the mail is far less
+//      likely to be filtered than a personal mailbox would be.
+//   2. SMTP    — set SMTP_HOST/SMTP_USER/SMTP_PASS (587 STARTTLS or 465 TLS).
+//      Dependency-free client below; kept as a fallback and for hosts without
+//      outbound HTTPS to Resend.
+//
+// MAIL_FROM sets the sending address (must be on the verified domain when using
+// Resend); MAIL_FROM_NAME sets the display name recipients see in their inbox.
+//
+// If neither route is configured, send() does NOT throw — it logs the message and
+// reports delivered:false, so a reset link is never silently lost.
 
 const net = require('net');
 const tls = require('tls');
 
 function mailMode() {
-  return process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS
-    ? 'smtp'
-    : 'log';
+  if (process.env.RESEND_API_KEY) return 'resend';
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) return 'smtp';
+  return 'log';
 }
 
-// The bare address used in the SMTP envelope (MAIL FROM). MAIL_FROM may carry a
-// display name — e.g. `EssentiaLyfe <bot@gmail.com>` — so strip it down to the
-// address here; the envelope must never include the display name.
+// The bare address (SMTP envelope / Resend `from` address part). MAIL_FROM may carry
+// a display name — e.g. `EssentiaLyfe <noreply@…>` — so strip it down here; the
+// envelope must never include the display name.
 function fromAddress() {
-  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'no-reply@essentialyfe.app';
+  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@essentialyfehub1.com';
   const m = raw.match(/<([^>]+)>/);
   return (m ? m[1] : raw).trim();
 }
 
-// What the recipient sees in the From line. Set MAIL_FROM_NAME to show a product
-// name instead of a bare address — an inbox then lists "EssentiaLyfe", not a
-// personal mailbox, which matters when the sending account is a plain Gmail.
+// What the recipient sees in the From line. MAIL_FROM_NAME shows the product name
+// instead of a bare address, so an inbox lists "EssentiaLyfe".
 function fromHeader() {
-  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'no-reply@essentialyfe.app';
+  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@essentialyfehub1.com';
   if (/</.test(raw)) return raw.trim(); // already "Name <addr>"
   const name = process.env.MAIL_FROM_NAME;
   return name ? `${name} <${fromAddress()}>` : fromAddress();
+}
+
+// ---- Resend (HTTPS) ----
+// Throws on a non-2xx so send() can log the body and report delivered:false.
+async function resendSend({ to, subject, text }) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ from: fromHeader(), to: [to], subject, text }),
+  });
+  const body = await res.text();
+  if (!res.ok) throw new Error(`Resend ${res.status}: ${body}`);
+  let id = null;
+  try { id = JSON.parse(body).id; } catch {}
+  return id;
 }
 
 // Minimal SMTP conversation. Reads greeting/replies line-by-line and asserts the
@@ -134,14 +156,21 @@ function smtpSend({ host, port, user, pass, from, fromHdr, to, subject, text }) 
   });
 }
 
-// Never throws. Returns { delivered, mode }.
+// Never throws. Returns { delivered, mode, id? }.
 async function send({ to, subject, text }) {
   const mode = mailMode();
-  if (mode !== 'smtp') {
+
+  if (mode === 'log') {
     console.log(`[mail:log] to=${to} subject="${subject}"\n${text}`);
     return { delivered: false, mode };
   }
+
   try {
+    if (mode === 'resend') {
+      const id = await resendSend({ to, subject, text });
+      console.log(`[mail:sent] via resend to=${to} subject="${subject}" id=${id}`);
+      return { delivered: true, mode, id };
+    }
     await smtpSend({
       host: process.env.SMTP_HOST,
       port: process.env.SMTP_PORT || 587,
@@ -151,9 +180,32 @@ async function send({ to, subject, text }) {
       fromHdr: fromHeader(),
       to, subject, text,
     });
-    console.log(`[mail:sent] to=${to} subject="${subject}"`);
+    console.log(`[mail:sent] via smtp to=${to} subject="${subject}"`);
     return { delivered: true, mode };
   } catch (e) {
+    // If Resend fails but SMTP is also configured, try it rather than dropping the
+    // mail — a reset link is time-sensitive.
+    const canFallBack = mode === 'resend'
+      && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
+    if (canFallBack) {
+      console.error(`[mail:resend-failed] ${e.message} — falling back to SMTP`);
+      try {
+        await smtpSend({
+          host: process.env.SMTP_HOST,
+          port: process.env.SMTP_PORT || 587,
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+          from: fromAddress(),
+          fromHdr: fromHeader(),
+          to, subject, text,
+        });
+        console.log(`[mail:sent] via smtp (fallback) to=${to}`);
+        return { delivered: true, mode: 'smtp' };
+      } catch (e2) {
+        console.error(`[mail:failed] to=${to} resend=(${e.message}) smtp=(${e2.message}) — content follows\n${text}`);
+        return { delivered: false, mode, error: e2.message };
+      }
+    }
     // Log the content so the action is never silently lost.
     console.error(`[mail:failed] to=${to} (${e.message}) — content follows\n${text}`);
     return { delivered: false, mode, error: e.message };

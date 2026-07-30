@@ -111,6 +111,21 @@ function init() {
     `);
     // Every admin can see everything by definition — keep the flag consistent with that.
     await pool.query(`UPDATE users SET can_view_sensitive = true WHERE role = 'admin' AND can_view_sensitive = false`);
+
+    // Price monitoring: the previous price and when it changed, so a re-list at a new
+    // price updates the row he already has instead of being thrown away as a duplicate.
+    // "Previous vs current" is all he needs; a full history table would be heavier for
+    // no extra answer.
+    await pool.query(`
+      ALTER TABLE listings ADD COLUMN IF NOT EXISTS previous_price BIGINT;
+      ALTER TABLE listings ADD COLUMN IF NOT EXISTS price_changed_at TIMESTAMPTZ;
+    `);
+
+    // Digest bookkeeping — which listings have already been reported, so a second
+    // send on the same day doesn't repeat itself.
+    await pool.query(`
+      ALTER TABLE listings ADD COLUMN IF NOT EXISTS digest_sent_at TIMESTAMPTZ;
+    `);
   })();
   return readyPromise;
 }
@@ -128,7 +143,22 @@ async function upsertListing(r) {
      VALUES ($1,$2,$3,$4,$5,$6,$7, $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
              $21,$22,$23,$24,$25,$26,$27,$28, $29,$30,$31,$32,$33, $34,$35,$36,
              $37,$38,$39,$40,$41,$42,$43,$44,$45, $46,$47,$48,$49, $50,$51,$52)
-     ON CONFLICT (street_line, city) DO NOTHING`,
+     -- Identity is the property, so a re-list is the SAME row. If the price moved,
+     -- record where it came from and when, and refresh the fields that go stale.
+     -- His own manual fields are never touched here. The xmax = 0 test in the
+     -- RETURNING clause distinguishes a fresh insert from an update of an existing row.
+     ON CONFLICT (street_line, city) DO UPDATE SET
+       previous_price = CASE WHEN EXCLUDED.price IS DISTINCT FROM listings.price
+                             THEN listings.price ELSE listings.previous_price END,
+       price_changed_at = CASE WHEN EXCLUDED.price IS DISTINCT FROM listings.price
+                               THEN now() ELSE listings.price_changed_at END,
+       price = COALESCE(EXCLUDED.price, listings.price),
+       price_per_sqft = COALESCE(EXCLUDED.price_per_sqft, listings.price_per_sqft),
+       last_updated = COALESCE(EXCLUDED.last_updated, listings.last_updated),
+       days_on_market = COALESCE(EXCLUDED.days_on_market, listings.days_on_market),
+       source_url = COALESCE(EXCLUDED.source_url, listings.source_url)
+     WHERE EXCLUDED.price IS DISTINCT FROM listings.price
+     RETURNING id, (xmax = 0) AS inserted, previous_price, price`,
     [
       r.source, r.sourceUrl, r.mlsId, r.listingId != null ? String(r.listingId) : null, r.propertyId != null ? String(r.propertyId) : null, r.spec, 'in_review',
       r.title, r.address, r.streetLine, r.country, r.state, r.county, r.city, r.neighborhood, r.area, r.zip != null ? String(r.zip) : null, r.lat, r.lng, r.gatedCommunity,
@@ -140,7 +170,20 @@ async function upsertListing(r) {
       r.enrichedBy, r.lastUpdated, r.daysOnMarket,
     ]
   );
-  return res.rowCount > 0;
+  // Three outcomes, and the collector reports each differently:
+  //   inserted        a property he has never seen
+  //   priceChanged    one he already had, now listed at a different price
+  //   (neither)       already known at the same price — nothing to say
+  const row = res.rows[0];
+  if (!row) return { inserted: false, priceChanged: false };
+  if (row.inserted) return { inserted: true, priceChanged: false, id: row.id };
+  return {
+    inserted: false,
+    priceChanged: true,
+    id: row.id,
+    from: row.previous_price == null ? null : Number(row.previous_price),
+    to: row.price == null ? null : Number(row.price),
+  };
 }
 
 function rowToApi(row) {
@@ -220,6 +263,69 @@ const q = {
     vals.push(id);
     const r = await pool.query(`UPDATE listings SET ${sets.join(', ')} WHERE id=$${i}`, vals);
     return { updated: r.rowCount ? sets.length : 0, listing: await q.get(id) };
+  },
+
+  // Properties whose price moved, newest change first. `drop` is positive when the
+  // price came DOWN, which is the direction he cares about.
+  async priceChanges({ days = 30, onlyDrops = false } = {}) {
+    const { rows } = await pool.query(
+      `SELECT * FROM listings
+        WHERE price_changed_at IS NOT NULL
+          AND previous_price IS NOT NULL
+          AND price_changed_at > now() - ($1 || ' days')::interval
+          ${onlyDrops ? 'AND price < previous_price' : ''}
+        ORDER BY price_changed_at DESC`,
+      [String(days)]
+    );
+    return rows.map(r => ({
+      ...rowToApi(r),
+      drop: Number(r.previous_price) - Number(r.price),
+      dropPct: Number(r.previous_price) ? Math.round((1 - Number(r.price) / Number(r.previous_price)) * 100) : null,
+    }));
+  },
+
+  // What the digest should cover: properties sourced since the last digest, plus any
+  // price change since then. Nothing is marked as reported until the send succeeds.
+  async digestContents({ days = 1 } = {}) {
+    const iv = `($1 || ' days')::interval`;
+    const fresh = await pool.query(
+      `SELECT * FROM listings
+        WHERE digest_sent_at IS NULL AND created_at > now() - ${iv}
+        ORDER BY price DESC NULLS LAST`, [String(days)]);
+    const moved = await pool.query(
+      `SELECT * FROM listings
+        WHERE previous_price IS NOT NULL
+          AND price_changed_at > now() - ${iv}
+        ORDER BY price_changed_at DESC`, [String(days)]);
+    return {
+      newListings: fresh.rows.map(rowToApi),
+      priceChanges: moved.rows.map(r => ({
+        ...rowToApi(r),
+        drop: Number(r.previous_price) - Number(r.price),
+      })),
+    };
+  },
+
+  // Just the two numbers the dashboard line needs — COUNT in the database instead of
+  // shipping every row (with its photo JSON) to the app to be counted there.
+  async digestCounts({ days = 1 } = {}) {
+    const { rows } = await pool.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM listings
+           WHERE digest_sent_at IS NULL AND created_at > now() - ($1 || ' days')::interval) AS new_count,
+         (SELECT COUNT(*)::int FROM listings
+           WHERE previous_price IS NOT NULL
+             AND price_changed_at > now() - ($1 || ' days')::interval) AS price_change_count`,
+      [String(days)]
+    );
+    return { newCount: rows[0].new_count, priceChangeCount: rows[0].price_change_count };
+  },
+
+  async markDigestSent(ids) {
+    if (!ids || !ids.length) return 0;
+    const { rowCount } = await pool.query(
+      `UPDATE listings SET digest_sent_at = now() WHERE id = ANY($1::bigint[])`, [ids]);
+    return rowCount;
   },
 
   async newRun(sourced, kept, note) {

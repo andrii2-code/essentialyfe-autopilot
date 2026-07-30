@@ -21,15 +21,24 @@ async function collectListings(opts) {
 }
 
 // ---- collector: pull real listings, enrich, store in review queue ----
+// Reports three things, because a re-list at a new price is neither "new" nor nothing:
+// how many properties he had never seen, and how many known ones moved price.
 async function runCollector({ limitPerSpec = 12 } = {}) {
   const recs = await collectListings({ limitPerSpec });
   let kept = 0;
+  const priceChanges = [];
   for (const r of recs) {
     const enriched = await enrich(r);
-    if (await upsertListing(enriched)) kept++;
+    const res = await upsertListing(enriched);
+    if (res.inserted) kept++;
+    else if (res.priceChanged) {
+      priceChanges.push({ id: res.id, address: enriched.streetLine || enriched.address, from: res.from, to: res.to });
+    }
   }
-  await q.newRun(recs.length, kept, `collector: ${kept} new of ${recs.length}`);
-  return { sourced: recs.length, kept };
+  const note = `collector: ${kept} new of ${recs.length}`
+    + (priceChanges.length ? `, ${priceChanges.length} price change${priceChanges.length === 1 ? '' : 's'}` : '');
+  await q.newRun(recs.length, kept, note);
+  return { sourced: recs.length, kept, priceChanges };
 }
 
 // ---- on approval: run the image pipeline for real, then hand to Drive ----

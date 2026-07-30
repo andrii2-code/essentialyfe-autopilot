@@ -6,6 +6,7 @@ const { driveMode } = require('./drive');
 const auth = require('./auth');
 const mailer = require('./mailer');
 const fields = require('./fields');
+const digest = require('./digest');
 
 // Admins always see the sensitive columns; members only when he grants it.
 const canViewSensitive = (user) => !!user && (user.role === 'admin' || user.can_view_sensitive === true);
@@ -265,6 +266,47 @@ app.post('/api/listing/:id/approve', auth.requireAuth, wrap(async (req, res) => 
   // kick processing async; client polls the listing/summary
   processApproved(id).catch(e => console.error('processApproved', id, e.message));
   res.json({ ok: true, id, status: 'approved' });
+}));
+
+// ---- price monitoring ----
+// Known properties whose price moved. ?drops=1 for reductions only.
+app.get('/api/price-changes', auth.requireAuth, wrap(async (req, res) => {
+  const days = Math.min(Math.max(+(req.query.days || 30), 1), 365);
+  const rows = await q.priceChanges({ days, onlyDrops: req.query.drops === '1' });
+  const canSee = canViewSensitive(req.user);
+  res.json(rows.map(r => fields.redact(r, canSee)));
+}));
+
+// ---- daily email ----
+// What the next email would contain. Counts only by default — the dashboard shows one
+// line, so rendering the full HTML for that would be ~14KB of waste on every load.
+// ?html=1 when the whole email body is actually wanted.
+app.get('/api/digest/preview', auth.requireAdmin, wrap(async (req, res) => {
+  const days = Math.min(Math.max(+(req.query.days || 1), 1), 90);
+  if (req.query.html === '1') {
+    const contents = await q.digestContents({ days });
+    return res.json({
+      newCount: contents.newListings.length,
+      priceChangeCount: contents.priceChanges.length,
+      subject: digest.subjectFor(contents),
+      html: digest.renderHtml(contents),
+      mailMode: mailer.mailMode(),
+    });
+  }
+  const counts = await q.digestCounts({ days });
+  res.json({ ...counts, mailMode: mailer.mailMode() });
+}));
+
+// Send it now — to himself by default, so testing never mails the whole team.
+app.post('/api/digest/send', auth.requireAdmin, wrap(async (req, res) => {
+  const days = Math.min(Math.max(+(req.body?.days || 1), 1), 90);
+  const toMe = req.body?.toMe !== false;
+  const r = await digest.sendDigest({
+    days,
+    force: req.body?.force !== false,
+    to: toMe ? req.user.email : null,
+  });
+  res.json(r);
 }));
 
 // ---- run the collector on demand (admin only) ----

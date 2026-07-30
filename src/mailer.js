@@ -43,14 +43,16 @@ function fromHeader() {
 
 // ---- Resend (HTTPS) ----
 // Throws on a non-2xx so send() can log the body and report delivered:false.
-async function resendSend({ to, subject, text }) {
+async function resendSend({ to, subject, text, html }) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ from: fromHeader(), to: [to], subject, text }),
+    // Send both parts when html is given: the client picks the rich one, and the text
+    // stays as the fallback for plain-text readers and spam scoring.
+    body: JSON.stringify({ from: fromHeader(), to: [to], subject, text, ...(html ? { html } : {}) }),
   });
   const body = await res.text();
   if (!res.ok) throw new Error(`Resend ${res.status}: ${body}`);
@@ -157,7 +159,9 @@ function smtpSend({ host, port, user, pass, from, fromHdr, to, subject, text }) 
 }
 
 // Never throws. Returns { delivered, mode, id? }.
-async function send({ to, subject, text }) {
+// `html` is optional; the SMTP fallback sends the text part only, which is acceptable
+// for a fallback path.
+async function send({ to, subject, text, html }) {
   const mode = mailMode();
 
   if (mode === 'log') {
@@ -167,7 +171,7 @@ async function send({ to, subject, text }) {
 
   try {
     if (mode === 'resend') {
-      const id = await resendSend({ to, subject, text });
+      const id = await resendSend({ to, subject, text, html });
       console.log(`[mail:sent] via resend to=${to} subject="${subject}" id=${id}`);
       return { delivered: true, mode, id };
     }

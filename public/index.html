@@ -20,6 +20,19 @@
   #app { visibility: hidden; }
   html.auth-ready #app { visibility: visible; }
 </style>
+<script>
+  // Apply the saved theme before the first paint. If this ran later (in app.js) the
+  // page would flash light before turning dark — the same class of problem as the
+  // dashboard showing before the login screen.
+  (function () {
+    try {
+      var saved = localStorage.getItem('esl-theme');
+      var dark = saved ? saved === 'dark'
+        : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+    } catch (e) {}
+  })();
+</script>
 </head>
 <body>
 <div id="app">
@@ -32,6 +45,7 @@
       <a class="nav-item active" data-view="dashboard"><span class="ic">◆</span> Dashboard</a>
       <a class="nav-item" data-view="review"><span class="ic">♡</span> Review queue <b class="badge" id="badge-review">0</b></a>
       <a class="nav-item" data-view="processing"><span class="ic">⟳</span> Processing <b class="badge" id="badge-processing">0</b></a>
+      <a class="nav-item" data-view="prices"><span class="ic">↕</span> Price changes <b class="badge" id="badge-prices">0</b></a>
       <div class="nav-sep">DATABASE</div>
       <a class="nav-item" data-view="database"><span class="ic">▤</span> Property database <b class="badge" id="badge-db">0</b></a>
       <!-- Admin-only; shown once we know the signed-in user's role. -->
@@ -48,6 +62,9 @@
           <a class="acct-link" id="acct-logout">Sign out</a>
         </div>
       </div>
+      <button class="theme-toggle" id="theme-toggle" title="Switch between light and dark">
+        <span id="theme-icon">☾</span><span id="theme-label">Dark mode</span>
+      </button>
       <div class="drive-chip" id="drive-chip">
         <span class="dot"></span><span id="drive-mode">Drive: preview</span>
       </div>
@@ -85,6 +102,13 @@
           <div class="src-list" id="src-list"></div>
           <button class="btn-ghost" id="btn-collect">⟳ Run collector now</button>
           <div class="src-note">Live listing data and full photo galleries across your three specs. <span class="muted">Owner lookup is the one remaining Phase-2 piece.</span></div>
+
+          <div class="digest-box" id="digest-box">
+            <div class="panel-head" style="margin-top:4px"><h3>Daily email</h3></div>
+            <div class="digest-sum" id="digest-sum">—</div>
+            <button class="btn-ghost" id="btn-digest-send">✉ Send it to me now</button>
+            <div class="digest-msg" id="digest-msg"></div>
+          </div>
         </aside>
       </div>
     </section>
@@ -104,6 +128,31 @@
     <section class="view hidden" id="view-database">
       <div class="view-head"><div><h1 class="serif">Property Database</h1><p class="lede">Everything you approved lands here — structured to your full field list, images cleaned &amp; tagged in your Drive. <b>Click any property to open it and edit your own fields</b> — tier, your rates, contacts, availability and access notes. Export to CSV anytime.</p></div><button class="btn-ghost" id="btn-csv">⬇ Export CSV</button></div>
       <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr><th></th><th>Address</th><th>Area</th><th>Price</th><th>Tier</th><th>Your rate</th><th>Bd/Ba</th><th>Sq Ft</th><th>Drive</th><th>Status</th></tr></thead><tbody id="db-body"></tbody></table></div>
+    </section>
+
+    <!-- PRICE CHANGES -->
+    <section class="view hidden" id="view-prices">
+      <div class="view-head">
+        <div>
+          <h1 class="serif">Price changes</h1>
+          <p class="lede">When the collector sees a property you already have at a different price, it updates that record and keeps what it was before — so a re-listing shows up as a price change instead of a duplicate.</p>
+        </div>
+        <div class="price-filters">
+          <label class="team-chk"><input type="checkbox" id="prices-drops-only" checked> Drops only</label>
+          <select class="fld-input" id="prices-days" style="width:auto">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="365">Last year</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl" id="prices-table">
+          <thead><tr><th></th><th>Property</th><th>Area</th><th>Was</th><th>Now</th><th>Change</th><th>When</th><th>Status</th></tr></thead>
+          <tbody id="prices-body"></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- TEAM & PERMISSIONS (admin only) -->

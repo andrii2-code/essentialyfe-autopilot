@@ -67,6 +67,25 @@ async function apiSend(method, path, body) {
   return d;
 }
 
+// ---------- theme ----------
+// The initial theme is applied by an inline script in index.html (before first paint).
+// This only handles switching and remembering the choice.
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+function applyTheme(theme) {
+  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('esl-theme', theme); } catch {}
+  const icon = $('#theme-icon'), label = $('#theme-label');
+  // Label the destination, not the current state — "Dark mode" means "switch to dark".
+  if (icon) icon.textContent = theme === 'dark' ? '☀' : '☾';
+  if (label) label.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+}
+$('#theme-toggle')?.addEventListener('click', () => {
+  applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+});
+
 // ---------- navigation ----------
 // Returns the render promise so callers (and tests) can await a fully painted view;
 // each renderer fetches, so switching views is not instantaneous.
@@ -77,6 +96,7 @@ function show(view) {
   if (view === 'review') return renderSwipe();
   if (view === 'processing') return renderProcessing();
   if (view === 'database') return renderDatabase();
+  if (view === 'prices') return renderPrices();
   if (view === 'team') return renderTeam();
 }
 document.addEventListener('click', e => {
@@ -102,6 +122,12 @@ async function refreshSummary() {
 
 // ---------- dashboard ----------
 async function renderDashboard() {
+  // Start the secondary panels FIRST and don't await them here: the queue preview loads
+  // 32 property images, and browsers cap concurrent connections per host, so anything
+  // queued behind those images waits seconds before it even leaves.
+  // refreshDigest also carries the price-drop count, so this is one request, not two.
+  const sidePanels = refreshDigest().catch(e => console.error('digest summary:', e.message));
+
   await refreshSummary();
   const queue = await api('/queue');
   state.queue = queue;
@@ -128,6 +154,8 @@ async function renderDashboard() {
     <div class="src-row"><div><div class="src-name">Realtor.com — LA County</div><div class="src-sub">Live · listing data + full photo galleries</div></div><div class="src-count">+${total} new</div></div>
     <div class="src-row"><div><div class="src-name">All 3 specs</div><div class="src-sub">For-sale · Sold · Rentals</div></div><div class="src-count">on</div></div>
     <div class="src-row"><div><div class="src-name">Owner / address finder</div><div class="src-sub">Skip-trace API</div></div><div class="src-count off">Phase 2</div></div>`;
+
+  await sidePanels; // already in flight; just don't finish before they land
 }
 
 $('#btn-collect')?.addEventListener('click', async (e) => {
@@ -443,6 +471,93 @@ async function mountEditableFields(listing) {
     }
   };
 }
+
+// ---------- price changes ----------
+async function renderPrices() {
+  const body = $('#prices-body');
+  if (!body.children.length) body.innerHTML = `<tr><td colspan="8" class="muted" style="padding:18px">Loading…</td></tr>`;
+  const days = $('#prices-days')?.value || 30;
+  const dropsOnly = $('#prices-drops-only')?.checked;
+  let rows = [];
+  try {
+    rows = await api(`/price-changes?days=${days}${dropsOnly ? '&drops=1' : ''}`);
+  } catch (e) {
+    body.innerHTML = `<tr><td colspan="8" class="muted">${esc(e.message)}</td></tr>`;
+    return;
+  }
+  const badge = $('#badge-prices'); if (badge) badge.textContent = rows.length;
+
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="8" class="muted" style="text-align:center;padding:30px">
+      No ${dropsOnly ? 'price drops' : 'price changes'} in this period. Every property the collector
+      re-sees at the same price is left alone.</td></tr>`;
+    return;
+  }
+  body.innerHTML = rows.map(l => {
+    const down = l.drop > 0;
+    const when = l.price_changed_at ? new Date(l.price_changed_at).toLocaleDateString() : '—';
+    return `
+    <tr data-id="${l.id}">
+      <td><img class="t-thumb" src="${imgFor(l)}" alt=""></td>
+      <td><b>${esc(l.street_line || l.address)}</b></td>
+      <td>${esc(l.area || l.city || '')}</td>
+      <td class="muted">${fmt(l.previous_price)}</td>
+      <td class="t-price">${fmt(l.price)}</td>
+      <td><span class="delta ${down ? 'down' : 'up'}">${down ? '▼' : '▲'} ${fmt(Math.abs(l.drop))}${
+        l.dropPct != null ? ` <span class="muted">${Math.abs(l.dropPct)}%</span>` : ''}</span></td>
+      <td class="muted">${esc(when)}</td>
+      <td><span class="pill ${l.status}">${l.status === 'in_review' ? 'In review' : l.status === 'ready' ? 'Ready' : l.status}</span></td>
+    </tr>`;
+  }).join('');
+}
+$('#prices-days')?.addEventListener('change', renderPrices);
+$('#prices-drops-only')?.addEventListener('change', renderPrices);
+
+// ---------- daily email ----------
+// Shows what the next email would say, and lets him send it to himself to check.
+async function refreshDigest() {
+  const sum = $('#digest-sum');
+  if (!sum) return;
+  try {
+    const d = await api('/digest/preview?days=1');
+    // Same payload feeds the sidebar badge — no second request for a number we have.
+    const badge = $('#badge-prices');
+    if (badge) badge.textContent = d.priceChangeCount ?? 0;
+    const bits = [];
+    if (d.newCount) bits.push(`${d.newCount} new propert${d.newCount === 1 ? 'y' : 'ies'}`);
+    if (d.priceChangeCount) bits.push(`${d.priceChangeCount} price change${d.priceChangeCount === 1 ? '' : 's'}`);
+    sum.innerHTML = bits.length
+      ? `Next email: <b>${bits.join('</b>, <b>')}</b>.`
+      : `Nothing new to report since the last email.`;
+    if (d.mailMode === 'log') {
+      sum.innerHTML += ` <span class="muted">No email sender is connected yet, so it would only be logged.</span>`;
+    }
+  } catch (e) {
+    // Don't silently blank it — a summary stuck on "—" is indistinguishable from a
+    // real "nothing to report", which cost time to diagnose once already.
+    console.error('digest preview failed:', e.message);
+    sum.innerHTML = `<span class="muted">Couldn't load the summary.</span>`;
+  }
+}
+
+$('#btn-digest-send')?.addEventListener('click', async () => {
+  const msg = (t, cls = '') => { const el = $('#digest-msg'); el.className = 'digest-msg ' + cls; el.textContent = t; };
+  const btn = $('#btn-digest-send');
+  btn.disabled = true;
+  msg('Sending…');
+  try {
+    const r = await apiSend('POST', '/digest/send', { days: 1, toMe: true, force: true });
+    if (r.sent) {
+      const who = r.recipients?.map(x => x.to).join(', ') || 'you';
+      msg(`Sent to ${who}. Check your inbox.`, 'ok');
+    } else {
+      msg(r.reason === 'nothing to report'
+        ? 'Nothing to report right now.'
+        : `Not sent: ${r.recipients?.[0]?.error || r.reason || 'no email sender configured'}`, 'err');
+    }
+  } catch (e) { msg(e.message, 'err'); }
+  finally { btn.disabled = false; }
+});
 
 // ---------- team & permissions (admin only) ----------
 // The restricted fields (contacts, owner temper, wifi, access) are gated per person.
@@ -772,6 +887,7 @@ async function startApp() {
   // Don't unveil on a failed/expired check — fall back to the login screen instead.
   if (!me || !me.user) { hideApp(); return showAuth(!!me?.needsSetup); }
   state.user = me.user;
+  applyTheme(currentTheme()); // sync the toggle's icon/label with the theme already applied
   // "Team & permissions" is admin-only — he asked where the permissions live, and this
   // is the answer, but only the owner/admins should see the door.
   $('#nav-team')?.classList.toggle('hidden', me.user.role !== 'admin');

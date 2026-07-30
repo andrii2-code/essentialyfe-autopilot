@@ -109,6 +109,41 @@
             <button class="btn-ghost" id="btn-digest-send">✉ Send it to me now</button>
             <div class="digest-msg" id="digest-msg"></div>
           </div>
+
+          <!-- Automation: the all-day collector + when the daily email goes out -->
+          <div class="digest-box" id="auto-box">
+            <div class="panel-head" style="margin-top:4px"><h3>Automation</h3></div>
+
+            <div class="auto-row">
+              <label class="team-chk"><input type="checkbox" id="auto-collector"> All-day collector</label>
+              <span class="auto-state" id="auto-collector-state">—</span>
+            </div>
+            <div class="auto-sub" id="auto-collector-sub"></div>
+            <div class="auto-inline">
+              <span class="fld-l">Every</span>
+              <select class="fld-input" id="auto-interval" style="width:auto">
+                <option value="60">hour</option>
+                <option value="120">2 hours</option>
+                <option value="180" selected>3 hours</option>
+                <option value="360">6 hours</option>
+                <option value="720">12 hours</option>
+                <option value="1440">day</option>
+              </select>
+            </div>
+
+            <div class="auto-row" style="margin-top:12px">
+              <label class="team-chk"><input type="checkbox" id="auto-digest"> Send the daily email</label>
+              <span class="auto-state" id="auto-digest-state">—</span>
+            </div>
+            <div class="auto-sub" id="auto-digest-sub"></div>
+            <div class="auto-inline">
+              <span class="fld-l">At</span>
+              <select class="fld-input" id="auto-hour" style="width:auto"></select>
+              <span class="fld-l">UTC</span>
+            </div>
+
+            <div class="digest-msg" id="auto-msg"></div>
+          </div>
         </aside>
       </div>
     </section>

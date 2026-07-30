@@ -126,7 +126,11 @@ async function renderDashboard() {
   // 32 property images, and browsers cap concurrent connections per host, so anything
   // queued behind those images waits seconds before it even leaves.
   // refreshDigest also carries the price-drop count, so this is one request, not two.
-  const sidePanels = refreshDigest().catch(e => console.error('digest summary:', e.message));
+  const sidePanels = refreshDigest()
+    .catch(e => console.error('digest summary:', e.message))
+    .then(() => state.user?.role === 'admin'
+      ? renderAutomation().catch(e => console.error('automation:', e.message))
+      : $('#auto-box')?.classList.add('hidden'));
 
   await refreshSummary();
   const queue = await api('/queue');
@@ -471,6 +475,82 @@ async function mountEditableFields(listing) {
     }
   };
 }
+
+// ---------- automation (all-day collector + daily email schedule) ----------
+// The collector ships paused because every pass costs real API calls; this panel is
+// where he turns it on once the data subscription is live.
+function whenText(iso) {
+  if (!iso) return 'never';
+  if (iso === 'due now') return 'due now';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  const mins = Math.round((d - Date.now()) / 60000);
+  const stamp = d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  if (mins > 0) return `${stamp} (in ${mins < 60 ? mins + 'm' : Math.round(mins / 60) + 'h'})`;
+  const ago = -mins;
+  return `${stamp} (${ago < 60 ? ago + 'm' : Math.round(ago / 60) + 'h'} ago)`;
+}
+
+async function renderAutomation() {
+  const box = $('#auto-box');
+  if (!box) return;
+  let s;
+  try { s = await api('/automation'); } catch (e) { $('#auto-msg').textContent = e.message; return; }
+
+  $('#auto-collector').checked = !!s.collector.enabled;
+  $('#auto-interval').value = String(s.collector.intervalMin);
+  $('#auto-collector-state').textContent = s.collector.enabled ? 'on' : 'paused';
+  $('#auto-collector-state').className = 'auto-state ' + (s.collector.enabled ? 'on' : 'off');
+  $('#auto-collector-sub').innerHTML = s.collector.enabled
+    ? `Last run ${esc(whenText(s.collector.lastRunAt))} · next ${esc(whenText(s.collector.nextRunAt))}`
+    : `Paused — it won't pull new listings or use any of your data allowance.`;
+
+  // hour picker
+  const hourSel = $('#auto-hour');
+  if (!hourSel.options.length) {
+    hourSel.innerHTML = Array.from({ length: 24 }, (_, h) =>
+      `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
+  }
+  hourSel.value = String(s.digest.hourUTC);
+  $('#auto-digest').checked = !!s.digest.enabled;
+  $('#auto-digest-state').textContent = s.digest.enabled ? 'on' : 'off';
+  $('#auto-digest-state').className = 'auto-state ' + (s.digest.enabled ? 'on' : 'off');
+  const local = new Date(Date.UTC(2000, 0, 1, s.digest.hourUTC)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  $('#auto-digest-sub').innerHTML = s.digest.enabled
+    ? `Next ${esc(whenText(s.digest.nextDigestAt))} · ${esc(local)} your time`
+    : `Off — no daily email will be sent.`;
+
+  if (s.mailMode === 'log') {
+    $('#auto-digest-sub').innerHTML += ` <span class="muted">No email sender connected.</span>`;
+  }
+  if (s.lastError) {
+    $('#auto-msg').className = 'digest-msg err';
+    $('#auto-msg').textContent = `Last run failed: ${s.lastError.message}`;
+  } else {
+    $('#auto-msg').textContent = '';
+  }
+}
+
+async function saveAutomation(patch, note) {
+  const msg = (t, cls = '') => { const el = $('#auto-msg'); el.className = 'digest-msg ' + cls; el.textContent = t; };
+  msg('Saving…');
+  try {
+    await apiSend('PATCH', '/automation', patch);
+    msg(note || 'Saved.', 'ok');
+    await renderAutomation();
+  } catch (e) { msg(e.message, 'err'); await renderAutomation(); }
+}
+
+$('#auto-collector')?.addEventListener('change', e =>
+  saveAutomation({ collectorEnabled: e.target.checked },
+    e.target.checked ? 'All-day collector is on.' : 'Collector paused.'));
+$('#auto-interval')?.addEventListener('change', e =>
+  saveAutomation({ intervalMin: +e.target.value }));
+$('#auto-digest')?.addEventListener('change', e =>
+  saveAutomation({ digestEnabled: e.target.checked },
+    e.target.checked ? 'Daily email is on.' : 'Daily email off.'));
+$('#auto-hour')?.addEventListener('change', e =>
+  saveAutomation({ hourUTC: +e.target.value }));
 
 // ---------- price changes ----------
 async function renderPrices() {

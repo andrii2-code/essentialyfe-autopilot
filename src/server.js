@@ -7,6 +7,7 @@ const auth = require('./auth');
 const mailer = require('./mailer');
 const fields = require('./fields');
 const digest = require('./digest');
+const scheduler = require('./scheduler');
 
 // Admins always see the sensitive columns; members only when he grants it.
 const canViewSensitive = (user) => !!user && (user.role === 'admin' || user.can_view_sensitive === true);
@@ -309,21 +310,46 @@ app.post('/api/digest/send', auth.requireAdmin, wrap(async (req, res) => {
   res.json(r);
 }));
 
+// ---- automation (all-day collector + daily email) ----
+app.get('/api/automation', auth.requireAdmin, wrap(async (req, res) => {
+  res.json({ ...(await scheduler.status()), mailMode: mailer.mailMode() });
+}));
+
+// Turn either job on/off and adjust its cadence. Stored in the database, so a redeploy
+// keeps his choice — in particular, the collector stays OFF until he switches it on.
+app.patch('/api/automation', auth.requireAdmin, wrap(async (req, res) => {
+  const b = req.body || {};
+  const num = (v, lo, hi) => Math.min(Math.max(Math.round(Number(v)), lo), hi);
+
+  if (typeof b.collectorEnabled === 'boolean') await q.setSetting('collector.enabled', b.collectorEnabled);
+  if (b.intervalMin != null) await q.setSetting('collector.intervalMin', num(b.intervalMin, 15, 1440));
+  if (b.limitPerSpec != null) await q.setSetting('collector.limitPerSpec', num(b.limitPerSpec, 1, 40));
+  if (typeof b.digestEnabled === 'boolean') await q.setSetting('digest.enabled', b.digestEnabled);
+  if (b.hourUTC != null) await q.setSetting('digest.hourUTC', num(b.hourUTC, 0, 23));
+
+  res.json(await scheduler.status());
+}));
+
 // ---- run the collector on demand (admin only) ----
 app.post('/api/collect', auth.requireAdmin, wrap(async (req, res) => {
-  const limitPerSpec = Math.min(+(req.body?.limitPerSpec || 12), 40);
-  const r = await runCollector({ limitPerSpec });
+  // Goes through the scheduler so a manual pass also stamps lastRunAt — otherwise the
+  // automatic one could fire again seconds later and spend API calls twice.
+  const r = await scheduler.runCollectorPass({ manual: true });
   res.json(r);
 }));
 
 // ---- reset (admin only) ----
 app.post('/api/reset', auth.requireAdmin, wrap(async (req, res) => { await q.clearAll(); res.json({ ok: true }); }));
 
-// On boot, if the queue is empty, pull a first real batch so the live app is
-// never blank. Runs in the background; the collector also runs on demand + could
-// be put on a cron for the "all-day" behaviour.
+// On boot, if the queue is empty, pull a first batch so the app is never blank.
+// This costs real API calls, so it only runs when automation is switched on —
+// otherwise a redeploy would quietly spend quota while the collector is paused.
 async function seedIfEmpty() {
   try {
+    if (!(await q.getSetting('collector.enabled', false))) {
+      console.log('[boot] collector is paused — skipping the seed pass');
+      return;
+    }
     const c = await q.counts();
     if (c.sourced === 0) {
       console.log('[boot] empty DB — running first collector pass…');
@@ -341,6 +367,7 @@ if (require.main === module) {
       app.listen(PORT, () => {
         console.log(`EssentiaLyfe running on http://localhost:${PORT}`);
         seedIfEmpty();
+        scheduler.start();   // all-day collector + daily email
       });
     })
     .catch((e) => { console.error('[boot] DB init failed:', e.message); process.exit(1); });

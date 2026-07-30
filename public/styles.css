@@ -257,6 +257,15 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .digest-msg.ok{color:var(--green)}
 .digest-msg.err{color:var(--red)}
 
+/* ---- automation panel ---- */
+.auto-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.auto-state{font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.04em}
+.auto-state.on{background:rgba(47,158,109,.14);color:var(--green)}
+.auto-state.off{background:rgba(122,134,152,.16);color:var(--muted)}
+.auto-sub{font-size:11.5px;color:var(--muted);line-height:1.5;margin:5px 0 8px}
+.auto-inline{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.auto-inline .fld-input{font-size:12px;padding:5px 8px}
+
 /* ---- theme toggle (sidebar foot) ---- */
 .theme-toggle{display:flex;align-items:center;gap:8px;width:100%;margin-top:10px;padding:8px 10px;
   background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);border-radius:8px;

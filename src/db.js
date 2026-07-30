@@ -328,6 +328,34 @@ const q = {
     return rowCount;
   },
 
+  // ---- settings (small key/value state that must survive a restart) ----
+  async getSetting(key, fallback = null) {
+    const { rows } = await pool.query(`SELECT v FROM settings WHERE k=$1`, [key]);
+    if (!rows[0]) return fallback;
+    try { return JSON.parse(rows[0].v); } catch { return rows[0].v; }
+  },
+  async setSetting(key, value) {
+    await pool.query(
+      `INSERT INTO settings (k, v) VALUES ($1,$2)
+       ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v`,
+      [key, JSON.stringify(value)]
+    );
+    return value;
+  },
+  async allSettings() {
+    const { rows } = await pool.query(`SELECT k, v FROM settings`);
+    const out = {};
+    for (const r of rows) { try { out[r.k] = JSON.parse(r.v); } catch { out[r.k] = r.v; } }
+    return out;
+  },
+
+  // Recent collector runs, for the automation panel.
+  async recentRuns(limit = 10) {
+    const { rows } = await pool.query(
+      `SELECT id, started_at, sourced, kept, note FROM runs ORDER BY started_at DESC LIMIT $1`, [limit]);
+    return rows;
+  },
+
   async newRun(sourced, kept, note) {
     await pool.query(`INSERT INTO runs (sourced, kept, note) VALUES ($1,$2,$3)`, [sourced, kept, note]);
   },

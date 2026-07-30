@@ -1,0 +1,163 @@
+// The all-day collector and the daily email, running on their own.
+//
+// Both are driven by one timer that wakes up every minute and asks "is anything due?".
+// State lives in the settings table, not in memory, so a Railway redeploy doesn't
+// silently switch automation off or double-send the day's email.
+//
+// IMPORTANT — the collector ships PAUSED. Every collector pass costs real
+// RapidAPI calls, and that subscription isn't live yet, so leaving it running would
+// spend quota (or fail all day) before he's ready. He turns it on from the Automation
+// panel, or by setting COLLECTOR_ENABLED=true.
+//
+// Settings used:
+//   collector.enabled      bool    run the collector automatically
+//   collector.intervalMin  number  minutes between passes (default 180 = 8x/day)
+//   collector.limitPerSpec number  listings pulled per spec per pass
+//   collector.lastRunAt    ISO     when the last automatic pass finished
+//   digest.enabled         bool    send the daily email automatically
+//   digest.hourUTC         number  hour (UTC) to send it
+//   digest.lastSentDate    string  YYYY-MM-DD of the last send, so it goes once a day
+
+const { q } = require('./db');
+const { runCollector } = require('./pipeline');
+const { sendDigest } = require('./digest');
+
+const TICK_MS = 60 * 1000;
+
+const DEFAULTS = {
+  'collector.enabled': false,      // deliberately off — see the note above
+  'collector.intervalMin': 180,
+  'collector.limitPerSpec': 12,
+  'digest.enabled': true,
+  'digest.hourUTC': 13,            // ~6am Los Angeles, so it's waiting when he starts
+};
+
+let timer = null;
+let running = false;               // guards against overlapping passes
+let lastError = null;
+
+async function setting(key) {
+  const v = await q.getSetting(key, undefined);
+  return v === undefined || v === null ? DEFAULTS[key] : v;
+}
+
+// ---- collector ----
+async function collectorDue() {
+  if (!(await setting('collector.enabled'))) return false;
+  const last = await q.getSetting('collector.lastRunAt', null);
+  if (!last) return true; // never run — go now
+  const mins = (Date.now() - new Date(last).getTime()) / 60000;
+  return mins >= (await setting('collector.intervalMin'));
+}
+
+async function runCollectorPass({ manual = false } = {}) {
+  const limitPerSpec = await setting('collector.limitPerSpec');
+  const r = await runCollector({ limitPerSpec });
+  await q.setSetting('collector.lastRunAt', new Date().toISOString());
+  console.log(`[scheduler] collector${manual ? ' (manual)' : ''}: `
+    + `${r.kept} new of ${r.sourced}, ${r.priceChanges.length} price change(s)`);
+  return r;
+}
+
+// ---- daily email ----
+// Keyed on the calendar date rather than an interval, so it lands at a predictable
+// hour and a restart at 13:30 can't trigger a second send for the same day.
+function utcDate(d = new Date()) { return d.toISOString().slice(0, 10); }
+
+async function digestDue() {
+  if (!(await setting('digest.enabled'))) return false;
+  const hour = await setting('digest.hourUTC');
+  const now = new Date();
+  if (now.getUTCHours() < hour) return false;
+  const lastSent = await q.getSetting('digest.lastSentDate', null);
+  return lastSent !== utcDate(now);
+}
+
+async function runDigestPass() {
+  const r = await sendDigest({ days: 1, force: false });
+  // Stamp the date even when there was nothing to report: the point is one attempt a
+  // day, and re-checking every minute for a quiet day is pointless noise.
+  await q.setSetting('digest.lastSentDate', utcDate());
+  console.log(`[scheduler] daily email: ${r.sent ? 'sent' : 'not sent'}`
+    + ` (${r.newCount} new, ${r.priceChangeCount} price changes)`
+    + (r.reason ? ` — ${r.reason}` : ''));
+  return r;
+}
+
+// ---- the tick ----
+async function tick() {
+  if (running) return;             // a slow collector pass must not stack up
+  running = true;
+  try {
+    if (await collectorDue()) await runCollectorPass();
+    if (await digestDue()) await runDigestPass();
+    lastError = null;
+  } catch (e) {
+    // Never let a bad pass kill the timer — the next tick tries again.
+    lastError = { at: new Date().toISOString(), message: e.message };
+    console.error('[scheduler] tick failed:', e.message);
+  } finally {
+    running = false;
+  }
+}
+
+function start() {
+  if (timer) return;
+  // An env var can force the collector on for a deployment without touching the DB.
+  if (String(process.env.COLLECTOR_ENABLED).toLowerCase() === 'true') {
+    q.setSetting('collector.enabled', true).catch(() => {});
+  }
+  timer = setInterval(() => { tick().catch(() => {}); }, TICK_MS);
+  if (timer.unref) timer.unref();  // don't hold a test process open
+  console.log('[scheduler] started (checks every minute)');
+  // Check once shortly after boot rather than waiting a full minute.
+  setTimeout(() => { tick().catch(() => {}); }, 5000).unref?.();
+}
+
+function stop() {
+  if (timer) { clearInterval(timer); timer = null; }
+}
+
+// What the Automation panel shows.
+async function status() {
+  const s = {};
+  for (const k of Object.keys(DEFAULTS)) s[k] = await setting(k);
+  const lastRunAt = await q.getSetting('collector.lastRunAt', null);
+  const lastSentDate = await q.getSetting('digest.lastSentDate', null);
+
+  let nextRunAt = null;
+  if (s['collector.enabled']) {
+    nextRunAt = lastRunAt
+      ? new Date(new Date(lastRunAt).getTime() + s['collector.intervalMin'] * 60000).toISOString()
+      : 'due now';
+  }
+
+  // Next daily email: today at the hour if it hasn't gone yet, else tomorrow.
+  const now = new Date();
+  let nextDigestAt = null;
+  if (s['digest.enabled']) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), s['digest.hourUTC'], 0, 0));
+    if (lastSentDate === utcDate(now) || now.getTime() > d.getTime()) d.setUTCDate(d.getUTCDate() + 1);
+    nextDigestAt = d.toISOString();
+  }
+
+  return {
+    running: !!timer,
+    busy: running,
+    collector: {
+      enabled: s['collector.enabled'],
+      intervalMin: s['collector.intervalMin'],
+      limitPerSpec: s['collector.limitPerSpec'],
+      lastRunAt, nextRunAt,
+    },
+    digest: {
+      enabled: s['digest.enabled'],
+      hourUTC: s['digest.hourUTC'],
+      lastSentDate, nextDigestAt,
+    },
+    lastError,
+    recentRuns: await q.recentRuns(5),
+  };
+}
+
+module.exports = { start, stop, tick, status, runCollectorPass, runDigestPass, collectorDue, digestDue, DEFAULTS };

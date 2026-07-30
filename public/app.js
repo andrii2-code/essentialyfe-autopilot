@@ -227,10 +227,10 @@ async function renderDatabase() {
     const nImg = (l.images || []).length;
     // His own fields, surfaced in the table so the manual data is visible at a glance.
     const tier = l.tier ? `<span class="t">${esc(l.tier)}</span>` : '<span class="muted">—</span>';
-    const rate = l.monthly_rate ? fmt(l.monthly_rate) + '/mo'
-      : l.nightly_rate ? fmt(l.nightly_rate) + '/night'
-      : l.event_rate ? fmt(l.event_rate) + '/event'
-      : l.film_rate ? fmt(l.film_rate) + '/film'
+    const rate = l.rate1_monthly ? fmt(l.rate1_monthly) + '/mo'
+      : l.rate1_nightly ? fmt(l.rate1_nightly) + '/night'
+      : l.rate1_event ? fmt(l.rate1_event) + '/event'
+      : l.rate1_film ? fmt(l.rate1_film) + '/film'
       : '<span class="muted">—</span>';
     const drive = l.drive_folder_url
       ? `<a class="drive-link" href="${l.drive_folder_url}" target="_blank">📁 ${nImg} photo${nImg === 1 ? '' : 's'} · Open</a>`

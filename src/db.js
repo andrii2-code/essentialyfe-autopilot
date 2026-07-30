@@ -8,6 +8,7 @@
 // Connection: DATABASE_URL (Neon connection string). Required in production.
 
 const { Pool } = require('pg');
+const { alterStatements, FIELD_KEYS, coerce } = require('./fields');
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -97,6 +98,19 @@ function init() {
         used_at TIMESTAMPTZ
       );
     `);
+
+    // His own operational fields (rates, contacts, owner temper, access…) are added
+    // from the fields.js definition. ADD COLUMN IF NOT EXISTS makes this the migration
+    // too, so an existing database picks them up on the next boot without a manual step.
+    await pool.query(alterStatements('listings'));
+
+    // Per-user permission to see the sensitive fields. Admins always can; members only
+    // if he grants it. Default false, so granting is a deliberate act.
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_sensitive BOOLEAN NOT NULL DEFAULT false;
+    `);
+    // Every admin can see everything by definition — keep the flag consistent with that.
+    await pool.query(`UPDATE users SET can_view_sensitive = true WHERE role = 'admin' AND can_view_sensitive = false`);
   })();
   return readyPromise;
 }
@@ -187,6 +201,27 @@ const q = {
     await pool.query(`UPDATE listings SET ${sets.join(', ')} WHERE id=$${i}`, vals);
     return q.get(id);
   },
+  // Save edits to his own fields. Only keys defined in fields.js are accepted and each
+  // value is coerced to its column type, so a hand-typed "$15,000/mo" lands as 15000
+  // and an unknown key can never reach the SQL.
+  async updateFields(id, patch, { allowSensitive = true } = {}) {
+    const { SENSITIVE_KEYS } = require('./fields');
+    const sets = [], vals = [];
+    let i = 1;
+    for (const [k, raw] of Object.entries(patch || {})) {
+      if (!FIELD_KEYS.includes(k)) continue;
+      if (!allowSensitive && SENSITIVE_KEYS.includes(k)) continue; // silently refuse
+      const v = coerce(k, raw);
+      if (v === undefined) continue;
+      sets.push(`${k}=$${i++}`);
+      vals.push(v);
+    }
+    if (!sets.length) return { updated: 0, listing: await q.get(id) };
+    vals.push(id);
+    const r = await pool.query(`UPDATE listings SET ${sets.join(', ')} WHERE id=$${i}`, vals);
+    return { updated: r.rowCount ? sets.length : 0, listing: await q.get(id) };
+  },
+
   async newRun(sourced, kept, note) {
     await pool.query(`INSERT INTO runs (sourced, kept, note) VALUES ($1,$2,$3)`, [sourced, kept, note]);
   },
@@ -200,11 +235,12 @@ const q = {
     const { rows } = await pool.query(`SELECT COUNT(*)::int n FROM users`);
     return rows[0].n;
   },
-  async createUser(email, name, passHash, role) {
+  async createUser(email, name, passHash, role, canViewSensitive = false) {
     const { rows } = await pool.query(
-      `INSERT INTO users (email, name, pass_hash, role) VALUES ($1,$2,$3,$4)
-       ON CONFLICT (email) DO NOTHING RETURNING id, email, name, role`,
-      [email.toLowerCase().trim(), name || null, passHash, role || 'member']
+      `INSERT INTO users (email, name, pass_hash, role, can_view_sensitive) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (email) DO NOTHING RETURNING id, email, name, role, can_view_sensitive`,
+      [email.toLowerCase().trim(), name || null, passHash, role || 'member',
+       role === 'admin' ? true : !!canViewSensitive]
     );
     return rows[0] || null;
   },
@@ -213,15 +249,37 @@ const q = {
     return rows[0] || null;
   },
   async listUsers() {
-    const { rows } = await pool.query(`SELECT id, email, name, role, created_at FROM users ORDER BY created_at`);
+    const { rows } = await pool.query(
+      `SELECT id, email, name, role, can_view_sensitive, created_at FROM users ORDER BY created_at`);
     return rows;
+  },
+  // Change a member's role / sensitive-field access. Admins implicitly see everything,
+  // so promoting to admin also grants it.
+  async updateUserAccess(id, { role, canViewSensitive }) {
+    const sets = [], vals = [];
+    let i = 1;
+    if (role === 'admin' || role === 'member') { sets.push(`role=$${i++}`); vals.push(role); }
+    if (typeof canViewSensitive === 'boolean') { sets.push(`can_view_sensitive=$${i++}`); vals.push(canViewSensitive); }
+    if (role === 'admin') { sets.push(`can_view_sensitive=true`); }
+    if (!sets.length) return q.getUserById(id);
+    vals.push(id);
+    await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id=$${i}`, vals);
+    return q.getUserById(id);
+  },
+  async deleteUser(id) {
+    const { rowCount } = await pool.query(`DELETE FROM users WHERE id=$1`, [id]);
+    return rowCount > 0;
+  },
+  async countAdmins() {
+    const { rows } = await pool.query(`SELECT COUNT(*)::int n FROM users WHERE role='admin'`);
+    return rows[0].n;
   },
   async createSession(token, userId, expiresAt) {
     await pool.query(`INSERT INTO sessions (token, user_id, expires_at) VALUES ($1,$2,$3)`, [token, userId, expiresAt]);
   },
   async getSessionUser(token) {
     const { rows } = await pool.query(
-      `SELECT u.id, u.email, u.name, u.role FROM sessions s
+      `SELECT u.id, u.email, u.name, u.role, u.can_view_sensitive FROM sessions s
        JOIN users u ON u.id = s.user_id
        WHERE s.token=$1 AND s.expires_at > now()`,
       [token]

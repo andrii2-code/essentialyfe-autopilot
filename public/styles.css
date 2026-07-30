@@ -20,6 +20,8 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .brand{display:flex;align-items:center;gap:10px;padding:22px 20px 26px}
 .brand-mark{width:30px;height:30px;border-radius:7px;background:linear-gradient(135deg,var(--gold),var(--gold-d));color:#1a1300;display:grid;place-items:center;font-family:Fraunces,serif;font-weight:600;font-size:18px}
 .brand-name{font-weight:600;letter-spacing:.02em;color:#fff}
+/* His supplied wordmark. The artwork is white, so it sits directly on the navy. */
+.brand-logo{width:150px;max-width:100%;height:auto;display:block}
 .nav{display:flex;flex-direction:column;gap:2px;padding:0 12px;flex:1}
 .nav-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:8px;color:#aab6c8;font-size:14px;font-weight:500;cursor:pointer;text-decoration:none}
 .nav-item .ic{width:16px;text-align:center;opacity:.8;font-size:13px}
@@ -163,6 +165,8 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
   .swipe-body{grid-template-columns:1fr}
   .dt-cols{grid-template-columns:1fr}
   .sidebar{width:64px}.brand-name,.nav-item span:not(.ic),.badge,.nav-sep,.sidebar-foot{display:none}
+  /* collapsed rail: shrink the wordmark and drop its side padding so it still fits */
+  .brand{padding:18px 8px 20px;justify-content:center}.brand-logo{width:46px}
   .topbar{grid-template-columns:repeat(3,1fr)}
 }
 
@@ -192,3 +196,33 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .auth-link:hover{color:var(--ink)}
 /* explanatory line inside the auth card (forgot / reset flows) */
 .auth-note{color:var(--muted);font-size:13px;line-height:1.5}
+
+/* ---- his editable fields, inside the property detail card ---- */
+.fld-group{margin:14px 0 6px}
+.fld-group-t{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.fld-lock{font-size:10px;letter-spacing:.02em;text-transform:none;color:var(--gold-d);font-weight:500}
+.fld-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px 14px}
+.fld{display:flex;flex-direction:column;gap:4px}
+.fld-l{font-size:12px;color:var(--muted)}
+.fld-input{font:inherit;font-size:13px;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+.fld-input:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px rgba(200,164,77,.15)}
+textarea.fld-input{resize:vertical;min-height:38px}
+.fld-actions{display:flex;align-items:center;gap:12px;margin:18px 0 4px}
+.fld-status{font-size:12px;color:var(--muted)}
+.fld-status.ok{color:var(--green)}
+.fld-status.err{color:var(--red)}
+.fld-note{font-size:12px;color:var(--muted);background:var(--bg);border-radius:8px;padding:9px 11px;margin-top:12px}
+
+/* ---- team / permissions view ---- */
+.team-tbl .role-sel{font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink)}
+.team-chk{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink);cursor:pointer}
+.team-chk input{width:15px;height:15px;accent-color:var(--gold-d);cursor:pointer}
+.team-you{font-size:11px;color:var(--muted);margin-left:6px}
+.act-danger{color:var(--red);cursor:pointer;font-size:12px;text-decoration:none;background:none;border:0;font-family:inherit;padding:0}
+.act-danger:hover{text-decoration:underline}
+.act-danger:disabled{color:var(--muted);cursor:default;text-decoration:none}
+.team-add{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;margin-top:6px}
+.team-msg{font-size:12px;margin-top:10px}
+.team-msg.ok{color:var(--green)}
+.team-msg.err{color:var(--red)}
+.team-link-box{font-size:12px;background:var(--bg);border-radius:8px;padding:10px 12px;margin-top:10px;word-break:break-all;color:var(--ink)}

@@ -44,7 +44,7 @@ function imgFor(listing, i = 0) {
   return IMGS[(Number(listing) + i) % IMGS.length];
 }
 
-let state = { summary: null, queue: [], swipeIdx: 0 };
+let state = { summary: null, queue: [], swipeIdx: 0, user: null };
 
 async function api(path, opts) {
   const r = await fetch('/api' + path, opts ? { method: opts.method || 'GET', headers: { 'Content-Type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined } : undefined);
@@ -53,14 +53,31 @@ async function api(path, opts) {
   return r.json();
 }
 
+// Write requests where the server's {error} message is meant for the user (permission
+// rules, duplicate email, last-admin guard) — surface that text rather than raw JSON.
+async function apiSend(method, path, body) {
+  const r = await fetch('/api' + path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (r.status === 401) { showAuth(); throw new Error('not authenticated'); }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`);
+  return d;
+}
+
 // ---------- navigation ----------
+// Returns the render promise so callers (and tests) can await a fully painted view;
+// each renderer fetches, so switching views is not instantaneous.
 function show(view) {
   $$('.view').forEach(v => v.classList.add('hidden'));
   $('#view-' + view).classList.remove('hidden');
   $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === view));
-  if (view === 'review') renderSwipe();
-  if (view === 'processing') renderProcessing();
-  if (view === 'database') renderDatabase();
+  if (view === 'review') return renderSwipe();
+  if (view === 'processing') return renderProcessing();
+  if (view === 'database') return renderDatabase();
+  if (view === 'team') return renderTeam();
 }
 document.addEventListener('click', e => {
   const nav = e.target.closest('[data-view]');
@@ -201,13 +218,20 @@ async function renderProcessing() {
 
 // ---------- database ----------
 async function renderDatabase() {
+  const body = $('#db-body');
+  if (!body.children.length) body.innerHTML = `<tr><td colspan="10" class="muted" style="padding:18px">Loading…</td></tr>`;
   await refreshSummary();
   const rows = await api('/ready');
-  const body = $('#db-body');
-  if (!rows.length) { body.innerHTML = `<tr><td colspan="9" class="muted" style="text-align:center;padding:30px">No approved properties yet.</td></tr>`; return; }
+  if (!rows.length) { body.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">No approved properties yet.</td></tr>`; return; }
   body.innerHTML = rows.map(l => {
-    const tags = (l.images || []).map(im => im.tag).filter((v, i, a) => a.indexOf(v) === i).slice(0, 3);
     const nImg = (l.images || []).length;
+    // His own fields, surfaced in the table so the manual data is visible at a glance.
+    const tier = l.tier ? `<span class="t">${esc(l.tier)}</span>` : '<span class="muted">—</span>';
+    const rate = l.monthly_rate ? fmt(l.monthly_rate) + '/mo'
+      : l.nightly_rate ? fmt(l.nightly_rate) + '/night'
+      : l.event_rate ? fmt(l.event_rate) + '/event'
+      : l.film_rate ? fmt(l.film_rate) + '/film'
+      : '<span class="muted">—</span>';
     const drive = l.drive_folder_url
       ? `<a class="drive-link" href="${l.drive_folder_url}" target="_blank">📁 ${nImg} photo${nImg === 1 ? '' : 's'} · Open</a>`
       : `<span class="drive-link na" title="Folder + tagged files are prepared; uploads on service-account connect">📁 ${nImg ? nImg + ' · ' : ''}Prepared</span>`;
@@ -217,9 +241,10 @@ async function renderDatabase() {
       <td><b>${esc(l.street_line || l.address)}</b></td>
       <td>${esc(l.area || l.city || '')}</td>
       <td class="t-price">${fmt(l.price)}</td>
+      <td><div class="t-tags">${tier}</div></td>
+      <td>${rate}</td>
       <td>${l.beds}/${l.baths}</td>
       <td>${l.sqft ? l.sqft.toLocaleString() : '—'}</td>
-      <td><div class="t-tags">${tags.map(t => `<span class="t">${esc(t)}</span>`).join('') || '<span class="muted">—</span>'}</div></td>
       <td>${drive}</td>
       <td><span class="pill ${l.status}">${l.status === 'ready' ? 'Ready' : l.status}</span></td>
     </tr>`;
@@ -228,7 +253,11 @@ async function renderDatabase() {
 
 $('#btn-csv')?.addEventListener('click', async () => {
   const rows = await api('/ready');
-  const cols = ['address', 'city', 'area', 'spec', 'price', 'beds', 'baths', 'sqft', 'lot_acres', 'floors', 'parking', 'year_built', 'property_style', 'furnished', 'gated_community', 'neighborhood', 'description'];
+  // Feed/AI columns first, then his own fields — restricted ones only if he may see
+  // them (the API already omits those values otherwise, so this keeps headers honest).
+  const defs = await loadFieldDefs();
+  const cols = ['address', 'city', 'area', 'spec', 'price', 'beds', 'baths', 'sqft', 'lot_acres', 'floors', 'parking', 'year_built', 'property_style', 'furnished', 'gated_community', 'neighborhood', 'description']
+    .concat(defs.fields.map(f => f.key));
   const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => {
     let v = r[c]; if (Array.isArray(v)) v = v.join(' | '); if (v == null) v = '';
     v = String(v).replace(/"/g, '""'); return /[",\n]/.test(v) ? `"${v}"` : v;
@@ -304,12 +333,219 @@ function openDetail(l) {
         ${l.drive_folder_url ? `<a class="drive-link" href="${l.drive_folder_url}" target="_blank">Open folder in Drive →</a>` : `<div class="mini-note">${state.summary?.driveMode === 'live' ? '' : 'This host has no service account, so files are prepared, not uploaded. Connecting the service account to your master folder makes this live — no code change. (Verified working in development: real folders + a tagged image were created in Drive.)'}</div>`}
       </div>
 
+      <div class="dt-section-t">Your fields <span class="muted" style="font-weight:400;font-size:12px">— editable, saved to this property</span></div>
+      <div id="dt-editable"></div>
+
       <div class="owner-box"><span>🔒</span><div><b>Owner outreach</b> — skip-trace via API, permission-gated. <span class="muted">Queued for Phase 2, exactly as in your walkthrough.</span></div></div>
     </div>`;
   $('#detail-overlay').classList.remove('hidden');
   $('#dt-close').onclick = () => $('#detail-overlay').classList.add('hidden');
   $('#detail-overlay').onclick = (ev) => { if (ev.target.id === 'detail-overlay') $('#detail-overlay').classList.add('hidden'); };
+  mountEditableFields(l);
 }
+
+// ---------- his own fields: the editable half of a property ----------
+// Everything above in the detail card comes from the listing feed and the AI and is
+// read-only. This section is his: rates, tier, contacts, access notes — the values no
+// feed can supply. The form is generated from /api/fields, so adding a field server-side
+// makes it appear here with no frontend change.
+let FIELD_DEFS = null;
+
+async function loadFieldDefs() {
+  if (FIELD_DEFS) return FIELD_DEFS;
+  try { FIELD_DEFS = await api('/fields'); } catch { FIELD_DEFS = { fields: [], groups: [], canViewSensitive: false }; }
+  return FIELD_DEFS;
+}
+
+function fieldInput(f, value) {
+  const v = value == null ? '' : String(value);
+  const common = `id="fld-${f.key}" data-key="${f.key}" class="fld-input"`;
+  if (f.type === 'textarea') return `<textarea ${common} rows="2">${esc(v)}</textarea>`;
+  if (f.type === 'select') {
+    return `<select ${common}>${(f.options || []).map(o =>
+      `<option value="${esc(o)}"${o === v ? ' selected' : ''}>${o === '' ? '—' : esc(o)}</option>`).join('')}</select>`;
+  }
+  if (f.type === 'date') return `<input ${common} type="date" value="${esc(v)}">`;
+  if (f.type === 'money' || f.type === 'number') {
+    return `<input ${common} type="text" inputmode="numeric" value="${esc(v)}" placeholder="—">`;
+  }
+  return `<input ${common} type="text" value="${esc(v)}" placeholder="—">`;
+}
+
+async function mountEditableFields(listing) {
+  const host = $('#dt-editable');
+  if (!host) return;
+  const defs = await loadFieldDefs();
+  if (!defs.fields.length) { host.innerHTML = `<div class="muted" style="font-size:12px">No editable fields configured.</div>`; return; }
+
+  const groups = defs.groups.map(g => {
+    const inGroup = defs.fields.filter(f => f.group === g);
+    if (!inGroup.length) return '';
+    const isPrivate = inGroup.some(f => f.sensitive);
+    return `
+      <div class="fld-group">
+        <div class="fld-group-t">${esc(g)}${isPrivate ? ' <span class="fld-lock" title="Only people you give access to can see these">🔒 restricted</span>' : ''}</div>
+        <div class="fld-grid">
+          ${inGroup.map(f => `
+            <label class="fld">
+              <span class="fld-l">${esc(f.label)}${f.type === 'money' ? ' <span class="muted">(USD)</span>' : ''}</span>
+              ${fieldInput(f, listing[f.key])}
+            </label>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
+  host.innerHTML = `
+    ${groups}
+    ${defs.canViewSensitive ? '' : `<div class="fld-note">🔒 Contacts and private notes are restricted — ask an admin for access.</div>`}
+    <div class="fld-actions">
+      <button class="btn-primary" id="fld-save">Save changes</button>
+      <span class="fld-status" id="fld-status"></span>
+    </div>`;
+
+  const status = (msg, cls = '') => { const el = $('#fld-status'); el.className = 'fld-status ' + cls; el.textContent = msg; };
+
+  // Track what actually changed so a save only sends real edits.
+  const initial = {};
+  host.querySelectorAll('.fld-input').forEach(el => { initial[el.dataset.key] = el.value; });
+  host.querySelectorAll('.fld-input').forEach(el => {
+    el.addEventListener('input', () => status(''));
+  });
+
+  $('#fld-save').onclick = async () => {
+    const patch = {};
+    host.querySelectorAll('.fld-input').forEach(el => {
+      if (el.value !== initial[el.dataset.key]) patch[el.dataset.key] = el.value;
+    });
+    if (!Object.keys(patch).length) return status('Nothing changed.');
+    $('#fld-save').disabled = true;
+    status('Saving…');
+    try {
+      const r = await fetch('/api/listing/' + listing.id, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'Could not save');
+      // Re-render from what the server stored, so he sees the normalized value
+      // ("$15,000/mo" coming back as 15000) rather than what he typed.
+      Object.assign(listing, d.listing || {});
+      host.querySelectorAll('.fld-input').forEach(el => {
+        const v = listing[el.dataset.key];
+        el.value = v == null ? '' : String(v);
+        initial[el.dataset.key] = el.value;
+      });
+      status(`Saved ${d.updated} field${d.updated === 1 ? '' : 's'}.`, 'ok');
+      if (document.querySelector('.nav-item.active')?.dataset.view === 'database') renderDatabase();
+    } catch (e) {
+      status(e.message, 'err');
+    } finally {
+      $('#fld-save').disabled = false;
+    }
+  };
+}
+
+// ---------- team & permissions (admin only) ----------
+// The restricted fields (contacts, owner temper, wifi, access) are gated per person.
+// Gating happens on the SERVER — those columns are stripped from the API response for
+// anyone without access, so this screen grants real access, not just a hidden UI.
+async function renderTeam() {
+  const body = $('#team-body');
+  const msg = (t, cls = '') => { const el = $('#team-msg'); el.className = 'team-msg ' + cls; el.textContent = t; };
+  let users = [];
+  // Say "loading" rather than showing an empty table for the length of the fetch.
+  body.innerHTML = `<tr><td colspan="5" class="muted" style="padding:18px">Loading team…</td></tr>`;
+  try { users = await api('/auth/users'); } catch (e) { body.innerHTML = `<tr><td colspan="5" class="muted">${esc(e.message)}</td></tr>`; return; }
+
+  const meId = String(state.user?.id || '');
+  const admins = users.filter(u => u.role === 'admin').length;
+
+  body.innerHTML = users.map(u => {
+    const isMe = String(u.id) === meId;
+    const isAdmin = u.role === 'admin';
+    // An admin sees everything by definition, so the checkbox is on and locked.
+    return `
+    <tr data-uid="${u.id}">
+      <td><b>${esc(u.name || '—')}</b>${isMe ? '<span class="team-you">you</span>' : ''}</td>
+      <td>${esc(u.email)}</td>
+      <td>
+        <select class="role-sel" data-uid="${u.id}"${isMe && admins <= 1 ? ' disabled title="You are the only admin"' : ''}>
+          <option value="member"${!isAdmin ? ' selected' : ''}>Member</option>
+          <option value="admin"${isAdmin ? ' selected' : ''}>Admin</option>
+        </select>
+      </td>
+      <td>
+        <label class="team-chk">
+          <input type="checkbox" class="sens-chk" data-uid="${u.id}"
+                 ${isAdmin || u.can_view_sensitive ? 'checked' : ''}
+                 ${isAdmin ? 'disabled title="Admins always see every field"' : ''}>
+          ${isAdmin ? '<span class="muted">always</span>' : '<span>allowed</span>'}
+        </label>
+      </td>
+      <td>
+        <button class="act-danger" data-remove="${u.id}"${isMe ? ' disabled title="You cannot remove your own account"' : ''}>Remove</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // role change
+  body.querySelectorAll('.role-sel').forEach(sel => {
+    sel.onchange = async () => {
+      msg('Saving…');
+      try {
+        await apiSend('PATCH', '/auth/users/' + sel.dataset.uid, { role: sel.value });
+        msg('Updated.', 'ok');
+        renderTeam();
+      } catch (e) { msg(e.message, 'err'); renderTeam(); }
+    };
+  });
+
+  // restricted-field access toggle
+  body.querySelectorAll('.sens-chk').forEach(chk => {
+    chk.onchange = async () => {
+      msg('Saving…');
+      try {
+        await apiSend('PATCH', '/auth/users/' + chk.dataset.uid, { canViewSensitive: chk.checked });
+        msg(chk.checked ? 'Access granted.' : 'Access removed.', 'ok');
+      } catch (e) { msg(e.message, 'err'); renderTeam(); }
+    };
+  });
+
+  // remove
+  body.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.onclick = async () => {
+      const row = btn.closest('tr');
+      const who = row.querySelector('td')?.textContent.trim() || 'this person';
+      if (!confirm(`Remove ${who}? They lose access immediately.`)) return;
+      msg('Removing…');
+      try {
+        await apiSend('DELETE', '/auth/users/' + btn.dataset.remove);
+        msg('Removed.', 'ok');
+        renderTeam();
+      } catch (e) { msg(e.message, 'err'); }
+    };
+  });
+}
+
+$('#btn-add-user')?.addEventListener('click', async () => {
+  const msg = (t, cls = '') => { const el = $('#team-msg'); el.className = 'team-msg ' + cls; el.textContent = t; };
+  const name = $('#new-name').value.trim();
+  const email = $('#new-email').value.trim();
+  const password = $('#new-pass').value;
+  const role = $('#new-role').value;
+  const canViewSensitive = $('#new-sensitive').checked;
+  if (!email || !password) return msg('Email and a temporary password are required.', 'err');
+  if (password.length < 6) return msg('The temporary password must be at least 6 characters.', 'err');
+  $('#btn-add-user').disabled = true;
+  msg('Adding…');
+  try {
+    await apiSend('POST', '/auth/register', { name, email, password, role, canViewSensitive });
+    $('#new-name').value = $('#new-email').value = $('#new-pass').value = '';
+    $('#new-sensitive').checked = false;
+    msg(`${email} can now sign in with that temporary password — they can change it under their name in the sidebar.`, 'ok');
+    renderTeam();
+  } catch (e) { msg(e.message, 'err'); }
+  finally { $('#btn-add-user').disabled = false; }
+});
 
 // ---------- auth gate ----------
 // Renders a full-screen login (or first-run "create owner account") over the app.
@@ -535,6 +771,11 @@ async function startApp() {
   try { me = await (await fetch('/api/auth/me')).json(); } catch {}
   // Don't unveil on a failed/expired check — fall back to the login screen instead.
   if (!me || !me.user) { hideApp(); return showAuth(!!me?.needsSetup); }
+  state.user = me.user;
+  // "Team & permissions" is admin-only — he asked where the permissions live, and this
+  // is the answer, but only the owner/admins should see the door.
+  $('#nav-team')?.classList.toggle('hidden', me.user.role !== 'admin');
+  FIELD_DEFS = null; // re-fetch per session: what he may edit depends on his access
   mountAccount(me.user);
   revealApp();
   await renderDashboard();

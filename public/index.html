@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EssentiaLyfe · Sourcing Autopilot</title>
+<!-- Browser-tab mark: the EL monogram on the brand navy, so it reads on both a light
+     and a dark tab strip. 180px version doubles as the iOS home-screen icon. -->
+<link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="./favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="./favicon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="./styles.css">
 <style>
@@ -21,8 +26,7 @@
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-mark">E</div>
-      <div class="brand-name">EssentiaLyfe</div>
+      <img class="brand-logo" src="./logo-essentialyfe.png" alt="EssentiaLyfe">
     </div>
     <nav class="nav">
       <a class="nav-item active" data-view="dashboard"><span class="ic">◆</span> Dashboard</a>
@@ -30,6 +34,8 @@
       <a class="nav-item" data-view="processing"><span class="ic">⟳</span> Processing <b class="badge" id="badge-processing">0</b></a>
       <div class="nav-sep">DATABASE</div>
       <a class="nav-item" data-view="database"><span class="ic">▤</span> Property database <b class="badge" id="badge-db">0</b></a>
+      <!-- Admin-only; shown once we know the signed-in user's role. -->
+      <a class="nav-item hidden" data-view="team" id="nav-team"><span class="ic">⚿</span> Team &amp; permissions</a>
     </nav>
     <div class="sidebar-foot">
       <div class="acct" id="acct">
@@ -96,8 +102,38 @@
 
     <!-- DATABASE -->
     <section class="view hidden" id="view-database">
-      <div class="view-head"><div><h1 class="serif">Property Database</h1><p class="lede">Everything you approved lands here — structured to your full field list, images cleaned &amp; tagged in your Drive. Export to CSV anytime.</p></div><button class="btn-ghost" id="btn-csv">⬇ Export CSV</button></div>
-      <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr><th></th><th>Address</th><th>Area</th><th>Price</th><th>Bd/Ba</th><th>Sq Ft</th><th>AI Tags</th><th>Drive</th><th>Status</th></tr></thead><tbody id="db-body"></tbody></table></div>
+      <div class="view-head"><div><h1 class="serif">Property Database</h1><p class="lede">Everything you approved lands here — structured to your full field list, images cleaned &amp; tagged in your Drive. <b>Click any property to open it and edit your own fields</b> — tier, your rates, contacts, availability and access notes. Export to CSV anytime.</p></div><button class="btn-ghost" id="btn-csv">⬇ Export CSV</button></div>
+      <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr><th></th><th>Address</th><th>Area</th><th>Price</th><th>Tier</th><th>Your rate</th><th>Bd/Ba</th><th>Sq Ft</th><th>Drive</th><th>Status</th></tr></thead><tbody id="db-body"></tbody></table></div>
+    </section>
+
+    <!-- TEAM & PERMISSIONS (admin only) -->
+    <section class="view hidden" id="view-team">
+      <div class="view-head">
+        <div>
+          <h1 class="serif">Team &amp; permissions</h1>
+          <p class="lede">Everyone you invite can see the properties and the sourcing queue. The restricted fields — contacts, owner temper, wifi and access info — stay hidden unless you tick the box for that person.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl team-tbl">
+          <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Can see restricted fields</th><th></th></tr></thead>
+          <tbody id="team-body"></tbody>
+        </table>
+      </div>
+      <div class="panel" style="margin-top:18px">
+        <div class="panel-head"><h3>Add someone</h3></div>
+        <div class="team-add">
+          <label class="fld"><span class="fld-l">Name</span><input class="fld-input" id="new-name" placeholder="Full name"></label>
+          <label class="fld"><span class="fld-l">Email</span><input class="fld-input" id="new-email" type="email" placeholder="name@company.com"></label>
+          <label class="fld"><span class="fld-l">Temporary password</span><input class="fld-input" id="new-pass" placeholder="min 6 characters"></label>
+          <label class="fld"><span class="fld-l">Role</span>
+            <select class="fld-input" id="new-role"><option value="member">Member</option><option value="admin">Admin</option></select>
+          </label>
+          <button class="btn-primary" id="btn-add-user">Add person</button>
+        </div>
+        <label class="team-chk" style="margin-top:12px"><input type="checkbox" id="new-sensitive"> Let them see the restricted fields (contacts, owner temper, wifi, access)</label>
+        <div class="team-msg" id="team-msg"></div>
+      </div>
     </section>
 
     <!-- DETAIL (overlay) -->

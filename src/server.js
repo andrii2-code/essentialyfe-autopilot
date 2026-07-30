@@ -5,6 +5,10 @@ const { runCollector, processApproved } = require('./pipeline');
 const { driveMode } = require('./drive');
 const auth = require('./auth');
 const mailer = require('./mailer');
+const fields = require('./fields');
+
+// Admins always see the sensitive columns; members only when he grants it.
+const canViewSensitive = (user) => !!user && (user.role === 'admin' || user.can_view_sensitive === true);
 
 const app = express();
 app.use(express.json());
@@ -25,7 +29,7 @@ app.use(auth.attachUser);
 // Register. The very first account becomes the admin (owner); after that, only an
 // admin can create accounts, and they choose the new user's role.
 app.post('/api/auth/register', wrap(async (req, res) => {
-  const { email, password, name, role } = req.body || {};
+  const { email, password, name, role, canViewSensitive: cvs } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'email and password required' });
   const existingCount = await q.countUsers();
   let assignedRole;
@@ -35,11 +39,12 @@ app.post('/api/auth/register', wrap(async (req, res) => {
     if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'only an admin can add users' });
     assignedRole = role === 'admin' ? 'admin' : 'member';
   }
-  const user = await q.createUser(email, name, auth.hashPassword(password), assignedRole);
+  const user = await q.createUser(email, name, auth.hashPassword(password), assignedRole, !!cvs);
   if (!user) return res.status(409).json({ error: 'that email already exists' });
   // log the first (owner) user straight in; admins adding others stay logged in as themselves
   if (existingCount === 0) await auth.issueSession(res, user.id);
-  res.json({ id: user.id, email: user.email, name: user.name, role: user.role });
+  res.json({ id: user.id, email: user.email, name: user.name, role: user.role,
+             can_view_sensitive: user.can_view_sensitive });
 }));
 
 app.post('/api/auth/login', wrap(async (req, res) => {
@@ -148,6 +153,38 @@ app.get('/api/auth/users', auth.requireAdmin, wrap(async (req, res) => {
   res.json(await q.listUsers());
 }));
 
+// Admin: change a team member's role / sensitive-field access.
+app.patch('/api/auth/users/:id', auth.requireAdmin, wrap(async (req, res) => {
+  const id = +req.params.id;
+  const target = await q.getUserById(id);
+  if (!target) return res.status(404).json({ error: 'no such user' });
+  const { role, canViewSensitive: cvs } = req.body || {};
+  // Don't let the last admin demote themselves and lock everyone out of user management.
+  if (target.role === 'admin' && role === 'member' && (await q.countAdmins()) <= 1) {
+    return res.status(400).json({ error: 'you are the only admin — promote someone else first' });
+  }
+  const updated = await q.updateUserAccess(id, { role, canViewSensitive: cvs });
+  res.json({ id: updated.id, email: updated.email, name: updated.name, role: updated.role,
+             can_view_sensitive: updated.can_view_sensitive });
+}));
+
+// Admin: remove a team member.
+app.delete('/api/auth/users/:id', auth.requireAdmin, wrap(async (req, res) => {
+  const id = +req.params.id;
+  // Compare as strings: BIGINT ids come back from pg as strings, so a numeric ===
+  // would never match and an admin could delete their own account.
+  if (String(id) === String(req.user.id)) {
+    return res.status(400).json({ error: "you can't remove your own account" });
+  }
+  const target = await q.getUserById(id);
+  if (!target) return res.status(404).json({ error: 'no such user' });
+  if (target.role === 'admin' && (await q.countAdmins()) <= 1) {
+    return res.status(400).json({ error: 'that is the only admin account' });
+  }
+  await q.deleteUser(id);
+  res.json({ ok: true });
+}));
+
 // Admin: send a reset link to a team member who is locked out.
 app.post('/api/auth/users/:id/reset-link', auth.requireAdmin, wrap(async (req, res) => {
   const user = await q.getUserById(+req.params.id);
@@ -182,13 +219,38 @@ app.get('/api/listings', auth.requireAuth, wrap(async (req, res) => {
   let rows = await q.all();
   if (spec) rows = rows.filter(r => r.spec === spec);
   if (status) rows = rows.filter(r => r.status === status);
-  res.json(rows);
+  const canSee = canViewSensitive(req.user);
+  res.json(rows.map(r => fields.redact(r, canSee)));
 }));
 app.get('/api/ready', auth.requireAuth, wrap(async (req, res) => res.json(await q.ready())));
+
+// The editable field definitions, so the UI builds the form from the same source the
+// database and validation use. `canEditSensitive` tells the client whether to render
+// the Contacts / Private sections at all.
+app.get('/api/fields', auth.requireAuth, wrap(async (req, res) => {
+  const canSee = canViewSensitive(req.user);
+  res.json({
+    fields: fields.FIELDS.filter(f => canSee || !f.sensitive),
+    groups: fields.GROUPS.filter(g => canSee || !fields.FIELDS.some(f => f.group === g && f.sensitive)),
+    canViewSensitive: canSee,
+  });
+}));
+
 app.get('/api/listing/:id', auth.requireAuth, wrap(async (req, res) => {
   const l = await q.get(+req.params.id);
   if (!l) return res.status(404).json({ error: 'not found' });
-  res.json(l);
+  res.json(fields.redact(l, canViewSensitive(req.user)));
+}));
+
+// Save his manual field edits. Only keys from fields.js are accepted; a member without
+// sensitive access silently cannot write those columns even by crafting the request.
+app.patch('/api/listing/:id', auth.requireAuth, wrap(async (req, res) => {
+  const id = +req.params.id;
+  if (!(await q.get(id))) return res.status(404).json({ error: 'not found' });
+  const { updated, listing } = await q.updateFields(id, req.body || {}, {
+    allowSensitive: canViewSensitive(req.user),
+  });
+  res.json({ ok: true, updated, listing: fields.redact(listing, canViewSensitive(req.user)) });
 }));
 
 // ---- swipe: approve / pass ----

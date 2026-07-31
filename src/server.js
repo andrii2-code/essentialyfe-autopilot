@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const { q, init } = require('./db');
 const { runCollector, processApproved } = require('./pipeline');
-const { driveMode } = require('./drive');
+const { driveMode, fetchDriveFile } = require('./drive');
 const auth = require('./auth');
 const mailer = require('./mailer');
 const fields = require('./fields');
@@ -45,8 +45,47 @@ app.post('/api/auth/register', wrap(async (req, res) => {
   if (!user) return res.status(409).json({ error: 'that email already exists' });
   // log the first (owner) user straight in; admins adding others stay logged in as themselves
   if (existingCount === 0) await auth.issueSession(res, user.id);
+
+  // Someone added to the team gets told about it. Previously the account was created
+  // silently and the new person had no idea, so they were never actually invited.
+  let invited = null;
+  if (existingCount > 0) {
+    const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+    const who = req.user?.name || req.user?.email || 'An administrator';
+    const mail = await mailer.send({
+      to: user.email,
+      subject: 'You have been added to EssentiaLyfe',
+      text: `${who} has given you access to EssentiaLyfe — Sourcing Autopilot.\n\n`
+        + `Sign in here: ${base}\n`
+        + `  email:    ${user.email}\n`
+        + `  password: ${password}\n\n`
+        + `Please change that password once you are in: click your name at the bottom of the\n`
+        + `sidebar, then "Change password".`,
+      html: `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#f6f7f9;padding:24px">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden">
+    <div style="background:#0f1b2d;padding:18px 22px;color:#fff">
+      <div style="font-size:17px;font-weight:600">EssentiaLyfe</div>
+      <div style="font-size:12px;color:#9fb0c4;margin-top:2px">Sourcing Autopilot</div>
+    </div>
+    <div style="padding:22px;font-size:14px;color:#1b2431;line-height:1.6">
+      <p style="margin:0 0 14px">${String(who).replace(/[<>&]/g, '')} has given you access to EssentiaLyfe.</p>
+      <table style="font-size:14px;margin:0 0 16px">
+        <tr><td style="color:#7a8698;padding-right:12px">Email</td><td><b>${user.email}</b></td></tr>
+        <tr><td style="color:#7a8698;padding-right:12px">Password</td><td><b>${String(password).replace(/[<>&]/g, '')}</b></td></tr>
+      </table>
+      <a href="${base}" style="display:inline-block;background:#c8a44d;color:#1a1300;text-decoration:none;
+         font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px">Sign in</a>
+      <p style="margin:16px 0 0;color:#7a8698;font-size:13px">Please change that password once you are in —
+        click your name at the bottom of the sidebar, then "Change password".</p>
+    </div>
+  </div>
+</div>`,
+    });
+    invited = { emailed: mail.delivered, to: user.email, error: mail.error || null };
+  }
+
   res.json({ id: user.id, email: user.email, name: user.name, role: user.role,
-             can_view_sensitive: user.can_view_sensitive });
+             can_view_sensitive: user.can_view_sensitive, invited });
 }));
 
 app.post('/api/auth/login', wrap(async (req, res) => {
@@ -367,6 +406,29 @@ function redactAll(listing, canSee, customDefs) {
   for (const f of customDefs) if (f.sensitive) delete out[f.key];
   return out;
 }
+
+// ---- cleaned images ----
+// Serves the PROCESSED photo (watermark removed, address blurred, tagged, resized)
+// rather than the original listing URL. Without this the app could only show the
+// source photo, so what he saw and downloaded still had the MLS logo on it.
+const imageCache = new Map();   // fileId -> Buffer, so a gallery doesn't refetch per view
+app.get('/api/listing/:id/image/:idx', auth.requireAuth, wrap(async (req, res) => {
+  const l = await q.get(+req.params.id);
+  if (!l) return res.status(404).json({ error: 'not found' });
+  const im = (l.images || [])[+req.params.idx];
+  if (!im || !im.driveFileId) return res.status(404).json({ error: 'no processed image' });
+
+  let buf = imageCache.get(im.driveFileId);
+  if (!buf) {
+    buf = await fetchDriveFile(im.driveFileId);
+    if (!buf) return res.status(404).json({ error: 'could not fetch the processed image' });
+    if (imageCache.size > 200) imageCache.clear();   // crude bound; these are large
+    imageCache.set(im.driveFileId, buf);
+  }
+  res.set('Content-Type', 'image/jpeg');
+  res.set('Cache-Control', 'private, max-age=3600');
+  res.send(buf);
+}));
 
 // ---- swipe: approve / pass ----
 app.post('/api/listing/:id/pass', auth.requireAuth, wrap(async (req, res) => {

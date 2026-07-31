@@ -99,6 +99,9 @@ async function processApproved(id, onProgress = () => {}) {
   // strip heavy buffers before persisting
   const imageRecords = processed.map((p, i) => ({
     name: delivery.manifest[i]?.name,
+    // The Drive file id lets the app show the CLEANED image instead of the original
+    // source photo, which still carries the MLS watermark.
+    driveFileId: delivery.manifest[i]?.driveFileId || null,
     tag: p.tag, bytes: p.bytes, jpegQuality: p.jpegQuality,
     steps: p.steps, quality: p.quality,
   }));

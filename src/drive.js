@@ -152,22 +152,28 @@ async function deliverToDrive(listing, processedImages) {
         const im = processedImages[i];
         try {
           const dupeId = existingByName.get(manifest[i].name);
+          let fileId;
           if (dupeId) {
             // same filename already there — update its content instead of adding a copy
-            await withTimeout(drive.files.update({
+            const up = await withTimeout(drive.files.update({
               fileId: dupeId,
               media: { mimeType: 'image/jpeg', body: require('stream').Readable.from(im.buf) },
               fields: 'id',
               supportsAllDrives: true,
             }), DRIVE_OP_TIMEOUT, `update ${manifest[i].name}`);
+            fileId = up.data.id;
           } else {
-            await withTimeout(drive.files.create({
+            const cr = await withTimeout(drive.files.create({
               requestBody: { name: manifest[i].name, parents: [folderId] },
               media: { mimeType: 'image/jpeg', body: require('stream').Readable.from(im.buf) },
               fields: 'id',
               supportsAllDrives: true,
             }), DRIVE_OP_TIMEOUT, `upload ${manifest[i].name}`);
+            fileId = cr.data.id;
           }
+          // Keep the id: it is how the app serves the CLEANED image back to him. Without
+          // it the app could only show the original source photo, watermark and all.
+          manifest[i].driveFileId = fileId;
           uploaded++;
         } catch (e) {
           // one bad photo shouldn't sink the whole delivery
@@ -206,4 +212,21 @@ function driveMode() {
   return (driveClient() && MASTER_ID) ? 'live' : 'preview';
 }
 
-module.exports = { deliverToDrive, driveMode };
+// Fetch a processed image back out of Drive, so the app can show the CLEANED photo
+// rather than the original source URL (which still carries the MLS watermark).
+// Returns a Buffer, or null if Drive isn't connected or the file has gone.
+async function fetchDriveFile(fileId) {
+  const drive = driveClient();
+  if (!drive || !fileId) return null;
+  try {
+    const res = await withTimeout(
+      drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' }),
+      DRIVE_OP_TIMEOUT, 'download file');
+    return Buffer.from(res.data);
+  } catch (e) {
+    console.error('[drive] download failed:', fileId, e.message);
+    return null;
+  }
+}
+
+module.exports = { deliverToDrive, driveMode, fetchDriveFile };

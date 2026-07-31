@@ -57,6 +57,10 @@ const FIELDS = [
   // permit)", and a strict HH:MM would silently discard those on import.
   { key: 'event_end_time',               label: 'Event End Time',                   type: 'text', group: 'Availability' },
   { key: 'service_schedule',             label: 'Service Schedule',                 type: 'text', group: 'Availability' },
+  // The property's calendar feed (AirBnb, Vrbo, Google Calendar all publish one).
+  // Holding the URL is the first half of the iCal work; reading the feed to show
+  // booked dates is the second, and is a separate piece.
+  { key: 'ical_url',                     label: 'iCal Link',                        type: 'text', group: 'Availability' },
 
   // --- Space -------------------------------------------------------------------
   { key: 'available_space_off_limits', label: 'Available Space / Off Limits', type: 'textarea', group: 'Space' },
@@ -163,7 +167,7 @@ const FEED_COLUMNS = [
   { key: 'also_known_as',    label: 'Also Known As',      group: 'Character' },
   { key: 'amenities',        label: 'Amenities',         group: 'Character' },
   { key: 'last_updated',     label: 'Updated',           group: 'Listing' },
-  { key: 'created_at',       label: 'Added',             group: 'Listing', type: 'date' },
+  { key: 'created_at',       label: 'Added',             group: 'Listing', type: 'datetime' },
 ];
 
 // Everything he could put in the table: the feed columns plus his own fields. The UI

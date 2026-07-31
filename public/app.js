@@ -37,6 +37,14 @@ function firstTag(l) {
 // keyed by id so it stays stable per card. Accepts a listing object or a bare id.
 function imgFor(listing, i = 0) {
   if (listing && typeof listing === 'object') {
+    // Prefer the CLEANED photo — watermark removed, address blurred, tagged. The raw
+    // listing URL still carries the MLS logo, so showing it here meant everything he
+    // looked at or downloaded in the app was the un-processed original.
+    const done = (listing.images || []).filter(im => im && im.driveFileId);
+    if (done.length) {
+      const idx = i % done.length;
+      return `/api/listing/${listing.id}/image/${(listing.images || []).indexOf(done[idx])}`;
+    }
     const photos = realPhotos(listing);
     if (photos.length) return photos[i % photos.length];
     return IMGS[(Number(listing.id) + i) % IMGS.length];
@@ -109,11 +117,11 @@ async function refreshSummary() {
   const s = await api('/summary');
   state.summary = s;
   const c = s.counts;
-  $('#s-sourced').textContent = c.sourced;
-  $('#s-review').textContent = c.in_review;
+  $('#s-sourced').textContent = c.sourced;                 // every home held
+  $('#s-review').textContent = c.in_review;                // waiting on his yes/no
   $('#s-processing').textContent = c.processing;
-  $('#s-ready').textContent = c.ready;
-  $('#s-live').textContent = c.ready + c.live; // "in your Drive" = delivered
+  $('#s-ready').textContent = c.ready + c.live;            // delivered to Drive
+  $('#s-live').textContent = c.live;                       // published to the site
   $('#badge-review').textContent = c.in_review;
   $('#badge-processing').textContent = c.processing;
   $('#badge-db').textContent = c.sourced; // the database page lists every property
@@ -351,7 +359,11 @@ function cellHtml(l, c) {
 
   if (v == null || v === '') return '<span class="muted">—</span>';
   if (c.type === 'money') return fmt(v);
-  if (c.type === 'date' || /_at$/.test(c.key)) return esc(new Date(v).toLocaleDateString());
+  if (c.type === 'datetime' || /_at$/.test(c.key)) {
+    const d = new Date(v);
+    return esc(d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  }
+  if (c.type === 'date') return esc(new Date(v).toLocaleDateString());
   if (Array.isArray(v)) return esc(v.slice(0, 3).join(', '));
   if (c.type === 'number' && typeof v === 'number') return esc(v.toLocaleString());
   return esc(String(v));
@@ -1188,10 +1200,19 @@ $('#btn-add-user')?.addEventListener('click', async () => {
   $('#btn-add-user').disabled = true;
   msg('Adding…');
   try {
-    await apiSend('POST', '/auth/register', { name, email, password, role, canViewSensitive });
+    const r = await apiSend('POST', '/auth/register', { name, email, password, role, canViewSensitive });
     $('#new-name').value = $('#new-email').value = $('#new-pass').value = '';
     $('#new-sensitive').checked = false;
-    msg(`${email} can now sign in with that temporary password — they can change it under their name in the sidebar.`, 'ok');
+    // A visible confirmation, not just a line of text he might miss — and it says
+    // plainly whether the invite actually reached them.
+    const sent = r.invited?.emailed;
+    alert(sent
+      ? `${email} has been added and emailed their sign-in details.`
+      : `${email} has been added, but the invite email could not be sent`
+        + `${r.invited?.error ? ` (${r.invited.error})` : ''}.\n\n`
+        + `Give them these details yourself:\n  ${email}\n  ${password}`);
+    msg(sent ? `Invite emailed to ${email}.` : `${email} added — send them the password yourself.`,
+        sent ? 'ok' : 'err');
     renderTeam();
   } catch (e) { msg(e.message, 'err'); }
   finally { $('#btn-add-user').disabled = false; }

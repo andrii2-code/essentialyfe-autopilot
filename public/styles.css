@@ -272,6 +272,13 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .col-tag{font-style:normal;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;
   color:var(--gold-d);background:rgba(200,164,77,.14);padding:1px 5px;border-radius:4px}
 
+/* ---- creating a field of his own ---- */
+.col-new{border-top:1px solid var(--line);margin-top:14px;padding-top:14px}
+.col-new-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.col-del{border:0;background:none;color:var(--muted);cursor:pointer;font-size:15px;
+  line-height:1;padding:0 2px;margin-left:auto}
+.col-del:hover{color:var(--red)}
+
 /* ---- table filters + sortable headers ---- */
 .tbl-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .tbl th.sortable{cursor:pointer;user-select:none;white-space:nowrap}

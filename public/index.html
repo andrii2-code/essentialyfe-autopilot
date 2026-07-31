@@ -208,6 +208,27 @@
           </div>
         </div>
         <div class="col-picker-body" id="col-picker-body"></div>
+
+        <!-- He can create his own field here; it becomes a column and an editable
+             field on every property. Admin only. -->
+        <div class="col-new hidden" id="col-new">
+          <div class="col-group-t">Add a field of your own</div>
+          <div class="col-new-row">
+            <input class="fld-input" id="cf-label" placeholder="Field name (e.g. Pool Heated)" style="max-width:230px">
+            <select class="fld-input" id="cf-type" style="width:auto">
+              <option value="text">Text</option>
+              <option value="textarea">Long text</option>
+              <option value="number">Number</option>
+              <option value="money">Money</option>
+              <option value="date">Date</option>
+              <option value="select">Dropdown</option>
+            </select>
+            <input class="fld-input hidden" id="cf-options" placeholder="Choices, comma separated" style="max-width:230px">
+            <label class="team-chk"><input type="checkbox" id="cf-sensitive"> Restricted</label>
+            <button class="btn-ghost" id="cf-add">Add field</button>
+          </div>
+          <div class="digest-msg" id="cf-msg"></div>
+        </div>
       </div>
 
       <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr id="db-head"></tr></thead><tbody id="db-body"></tbody></table></div>

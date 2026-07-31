@@ -222,17 +222,77 @@ app.get('/api/listings', auth.requireAuth, wrap(async (req, res) => {
   if (spec) rows = rows.filter(r => r.spec === spec);
   if (status) rows = rows.filter(r => r.status === status);
   const canSee = canViewSensitive(req.user);
-  res.json(rows.map(r => fields.redact(r, canSee)));
+  const customDefs = await q.listCustomFields();
+  res.json(rows.map(r => redactAll(r, canSee, customDefs)));
 }));
 app.get('/api/ready', auth.requireAuth, wrap(async (req, res) => res.json(await q.ready())));
 
 // The editable field definitions, so the UI builds the form from the same source the
 // database and validation use. `canEditSensitive` tells the client whether to render
 // the Contacts / Private sections at all.
-// Everything he can put in the property table as a column — feed data and his own
-// fields together. The table builds its column picker from this.
+// Everything he can put in the property table as a column — feed data, his built-in
+// fields, and any field he has created himself.
 app.get('/api/columns', auth.requireAuth, wrap(async (req, res) => {
-  res.json({ columns: fields.columnCatalogue({ canViewSensitive: canViewSensitive(req.user) }) });
+  const canSee = canViewSensitive(req.user);
+  const custom = (await q.listCustomFields())
+    .filter(f => canSee || !f.sensitive)
+    .map(f => ({ key: f.key, label: f.label, group: 'Your own fields', type: f.type,
+                 editable: true, custom: true, sensitive: !!f.sensitive }));
+  res.json({ columns: [...fields.columnCatalogue({ canViewSensitive: canSee }), ...custom] });
+}));
+
+// ---- fields he creates himself ----
+// Turn what he types into a safe key. Prefixed so a custom field can never collide
+// with a real database column or a built-in field name.
+function customKeyFrom(label) {
+  const slug = String(label).toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  return slug ? `cf_${slug}` : null;
+}
+
+app.get('/api/custom-fields', auth.requireAuth, wrap(async (req, res) => {
+  const canSee = canViewSensitive(req.user);
+  res.json((await q.listCustomFields()).filter(f => canSee || !f.sensitive));
+}));
+
+app.post('/api/custom-fields', auth.requireAdmin, wrap(async (req, res) => {
+  const { label, type, options, sensitive } = req.body || {};
+  if (!label || !String(label).trim()) return res.status(400).json({ error: 'a name is required' });
+
+  const allowed = ['text', 'textarea', 'number', 'money', 'select', 'date'];
+  const t = allowed.includes(type) ? type : 'text';
+  const key = customKeyFrom(label);
+  if (!key) return res.status(400).json({ error: 'that name has no letters or numbers in it' });
+
+  // Don't let a new field shadow one that already exists under a different label.
+  const existing = await q.listCustomFields();
+  if (existing.some(f => f.key === key)) {
+    return res.status(409).json({ error: `you already have a field called "${label}"` });
+  }
+  let opts;
+  if (t === 'select') {
+    opts = String(options || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!opts.length) return res.status(400).json({ error: 'a dropdown needs at least one choice' });
+    opts.unshift('');   // allow "not set"
+  }
+
+  const created = await q.createCustomField({ key, label: String(label).trim(), type: t, options: opts, sensitive: !!sensitive });
+  if (!created) return res.status(409).json({ error: 'that field already exists' });
+  res.json({ ok: true, field: { ...created, options: opts, custom: true } });
+}));
+
+app.patch('/api/custom-fields/:key', auth.requireAdmin, wrap(async (req, res) => {
+  const { label, sensitive } = req.body || {};
+  const updated = await q.updateCustomField(req.params.key, { label, sensitive });
+  if (!updated) return res.status(404).json({ error: 'no such field' });
+  res.json({ ok: true, field: updated });
+}));
+
+// Deleting removes the field AND the values stored under it, on every property.
+app.delete('/api/custom-fields/:key', auth.requireAdmin, wrap(async (req, res) => {
+  const gone = await q.deleteCustomField(req.params.key);
+  if (!gone) return res.status(404).json({ error: 'no such field' });
+  res.json({ ok: true });
 }));
 
 app.get('/api/fields', auth.requireAuth, wrap(async (req, res) => {
@@ -247,7 +307,7 @@ app.get('/api/fields', auth.requireAuth, wrap(async (req, res) => {
 app.get('/api/listing/:id', auth.requireAuth, wrap(async (req, res) => {
   const l = await q.get(+req.params.id);
   if (!l) return res.status(404).json({ error: 'not found' });
-  res.json(fields.redact(l, canViewSensitive(req.user)));
+  res.json(redactAll(l, canViewSensitive(req.user), await q.listCustomFields()));
 }));
 
 // Save his manual field edits. Only keys from fields.js are accepted; a member without
@@ -255,11 +315,58 @@ app.get('/api/listing/:id', auth.requireAuth, wrap(async (req, res) => {
 app.patch('/api/listing/:id', auth.requireAuth, wrap(async (req, res) => {
   const id = +req.params.id;
   if (!(await q.get(id))) return res.status(404).json({ error: 'not found' });
-  const { updated, listing } = await q.updateFields(id, req.body || {}, {
-    allowSensitive: canViewSensitive(req.user),
-  });
-  res.json({ ok: true, updated, listing: fields.redact(listing, canViewSensitive(req.user)) });
+  const canSee = canViewSensitive(req.user);
+  const body = req.body || {};
+
+  // Split his own custom fields out: they live in a JSON column, not their own columns.
+  const customDefs = await q.listCustomFields();
+  const byKey = new Map(customDefs.map(f => [f.key, f]));
+  const builtin = {}, customPatch = {};
+  for (const [k, v] of Object.entries(body)) {
+    const def = byKey.get(k);
+    if (!def) { builtin[k] = v; continue; }
+    if (def.sensitive && !canSee) continue;    // same gate as the built-in fields
+    customPatch[k] = customValue(def, v);
+  }
+
+  const { updated, listing } = await q.updateFields(id, builtin, { allowSensitive: canSee });
+  let extra = 0;
+  if (Object.keys(customPatch).length) {
+    await q.updateCustomValues(id, customPatch);
+    extra = Object.keys(customPatch).length;
+  }
+  const fresh = extra ? await q.get(id) : listing;
+  res.json({ ok: true, updated: updated + extra, listing: redactAll(fresh, canSee, customDefs) });
 }));
+
+// Coerce a custom value the same way the built-in fields are coerced, so "$1,200"
+// stored in a money field is a number and a dropdown can only hold its own options.
+function customValue(def, raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  if (def.type === 'money' || def.type === 'number') {
+    const cleaned = String(raw).replace(/[^0-9.\-]/g, '');
+    if (!/\d/.test(cleaned)) return null;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  if (def.type === 'select') {
+    const v = String(raw).trim().toLowerCase();
+    return (def.options || []).find(o => String(o).toLowerCase() === v) || null;
+  }
+  if (def.type === 'date') {
+    const s = String(raw).trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+  }
+  return String(raw).trim();
+}
+
+// Redact built-in sensitive fields AND any custom field he marked restricted.
+function redactAll(listing, canSee, customDefs) {
+  const out = fields.redact(listing, canSee);
+  if (!out || canSee) return out;
+  for (const f of customDefs) if (f.sensitive) delete out[f.key];
+  return out;
+}
 
 // ---- swipe: approve / pass ----
 app.post('/api/listing/:id/pass', auth.requireAuth, wrap(async (req, res) => {
@@ -296,7 +403,8 @@ app.get('/api/price-changes', auth.requireAuth, wrap(async (req, res) => {
   const days = Math.min(Math.max(+(req.query.days || 30), 1), 365);
   const rows = await q.priceChanges({ days, onlyDrops: req.query.drops === '1' });
   const canSee = canViewSensitive(req.user);
-  res.json(rows.map(r => fields.redact(r, canSee)));
+  const customDefs = await q.listCustomFields();
+  res.json(rows.map(r => redactAll(r, canSee, customDefs)));
 }));
 
 // ---- daily email ----

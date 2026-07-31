@@ -404,9 +404,17 @@ function renderColumnPicker() {
         <label class="col-opt">
           <input type="checkbox" data-col="${c.key}"${chosen.has(c.key) ? ' checked' : ''}>
           <span>${esc(c.label)}</span>
-          ${c.editable ? '<em class="col-tag">yours</em>' : ''}
+          ${c.custom ? `<button class="col-del" data-del="${esc(c.key)}" data-label="${esc(c.label)}" title="Delete this field">×</button>`
+            : c.editable ? '<em class="col-tag">yours</em>' : ''}
         </label>`).join('')}
     </div>`).join('');
+
+  box.querySelectorAll('[data-del]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();   // the button sits inside a <label>
+      deleteCustomField(btn.dataset.del, btn.dataset.label);
+    });
+  });
 
   box.querySelectorAll('input[data-col]').forEach(chk => {
     chk.addEventListener('change', () => {
@@ -421,9 +429,54 @@ function renderColumnPicker() {
   });
 }
 
+// ---- fields he creates himself ----
+// A custom field behaves like any other: a column he can show, and an editable field
+// on every property. Only an admin can create one.
+$('#cf-type')?.addEventListener('change', e => {
+  $('#cf-options')?.classList.toggle('hidden', e.target.value !== 'select');
+});
+
+$('#cf-add')?.addEventListener('click', async () => {
+  const msg = (t, cls = '') => { const el = $('#cf-msg'); el.className = 'digest-msg ' + cls; el.textContent = t; };
+  const label = $('#cf-label').value.trim();
+  const type = $('#cf-type').value;
+  const options = $('#cf-options').value;
+  const sensitive = $('#cf-sensitive').checked;
+  if (!label) return msg('Give the field a name first.', 'err');
+  $('#cf-add').disabled = true;
+  msg('Adding…');
+  try {
+    const r = await apiSend('POST', '/custom-fields', { label, type, options, sensitive });
+    $('#cf-label').value = ''; $('#cf-options').value = ''; $('#cf-sensitive').checked = false;
+    // Show it straight away — he just made it, he expects to see it.
+    COLUMN_CATALOGUE = [];
+    await loadColumnCatalogue();
+    setChosenColumns([...chosenColumns(), r.field.key]);
+    FIELD_DEFS = null;                      // the edit form must pick it up too
+    renderColumnPicker();
+    await renderDatabase({ refetch: false });
+    msg(`"${r.field.label}" added — it's now a column and a field on every property.`, 'ok');
+  } catch (e) { msg(e.message, 'err'); }
+  finally { $('#cf-add').disabled = false; }
+});
+
+async function deleteCustomField(key, label) {
+  if (!confirm(`Delete the field "${label}"?\n\nThis also deletes what you've entered in it on every property.`)) return;
+  try {
+    await apiSend('DELETE', '/custom-fields/' + encodeURIComponent(key));
+    COLUMN_CATALOGUE = [];
+    await loadColumnCatalogue();
+    setChosenColumns(chosenColumns().filter(k => k !== key));
+    FIELD_DEFS = null;
+    renderColumnPicker();
+    await renderDatabase({ refetch: false });
+  } catch (e) { alert(e.message); }
+}
+
 $('#db-columns')?.addEventListener('click', async () => {
   await loadColumnCatalogue();
   renderColumnPicker();
+  $('#col-new')?.classList.toggle('hidden', state.user?.role !== 'admin');
   $('#col-picker')?.classList.toggle('hidden');
 });
 $('#col-done')?.addEventListener('click', () => $('#col-picker')?.classList.add('hidden'));
@@ -768,7 +821,18 @@ let FIELD_DEFS = null;
 
 async function loadFieldDefs() {
   if (FIELD_DEFS) return FIELD_DEFS;
-  try { FIELD_DEFS = await api('/fields'); } catch { FIELD_DEFS = { fields: [], groups: [], canViewSensitive: false }; }
+  try {
+    FIELD_DEFS = await api('/fields');
+    // Fields he created himself are editable on the property too, in their own group.
+    const custom = await api('/custom-fields').catch(() => []);
+    if (custom.length) {
+      FIELD_DEFS = {
+        ...FIELD_DEFS,
+        fields: [...FIELD_DEFS.fields, ...custom.map(f => ({ ...f, group: 'Your own fields' }))],
+        groups: [...FIELD_DEFS.groups, 'Your own fields'],
+      };
+    }
+  } catch { FIELD_DEFS = { fields: [], groups: [], canViewSensitive: false }; }
   return FIELD_DEFS;
 }
 

@@ -104,6 +104,23 @@ function init() {
     // too, so an existing database picks them up on the next boot without a manual step.
     await pool.query(alterStatements('listings'));
 
+    // Fields HE creates from the UI. Definitions live in a table (not in code), and the
+    // values go in a JSON column on the listing rather than a new database column —
+    // adding a column per field would mean letting the app run DDL on user input, and
+    // would leave dead columns behind whenever he removed one.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS custom_fields (
+        key TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'text',
+        options TEXT,
+        sensitive BOOLEAN NOT NULL DEFAULT false,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+      ALTER TABLE listings ADD COLUMN IF NOT EXISTS custom TEXT;
+    `);
+
     // Per-user permission to see the sensitive fields. Admins always can; members only
     // if he grants it. Default false, so granting is a deliberate act.
     await pool.query(`
@@ -188,8 +205,13 @@ async function upsertListing(r) {
 
 function rowToApi(row) {
   if (!row) return null;
+  // Values of his own custom fields are stored together in one JSON column, but they
+  // are spread onto the object so the table, filters and sort treat them exactly like
+  // any other field — nothing downstream needs to know they are custom.
+  const custom = P(row.custom) || {};
   return {
     ...row,
+    ...custom,
     is_rental: !!row.is_rental,
     has_video: !!row.has_video,
     is_redfin: !!row.is_redfin,
@@ -348,6 +370,59 @@ const q = {
               { id: r.id, price: r.price == null ? null : Number(r.price) });
     }
     return out;
+  },
+
+  // ---- custom fields (the ones he creates himself) ----
+  async listCustomFields() {
+    const { rows } = await pool.query(
+      `SELECT key, label, type, options, sensitive FROM custom_fields ORDER BY sort_order, created_at`);
+    return rows.map(r => ({
+      key: r.key, label: r.label, type: r.type,
+      options: r.options ? JSON.parse(r.options) : undefined,
+      sensitive: r.sensitive, custom: true,
+    }));
+  },
+  async createCustomField({ key, label, type, options, sensitive }) {
+    const { rows } = await pool.query(
+      `INSERT INTO custom_fields (key, label, type, options, sensitive, sort_order)
+       VALUES ($1,$2,$3,$4,$5, (SELECT COALESCE(MAX(sort_order),0)+1 FROM custom_fields))
+       ON CONFLICT (key) DO NOTHING
+       RETURNING key, label, type, options, sensitive`,
+      [key, label, type, options ? JSON.stringify(options) : null, !!sensitive]
+    );
+    return rows[0] || null;
+  },
+  async updateCustomField(key, { label, options, sensitive }) {
+    const sets = [], vals = [];
+    let i = 1;
+    if (label != null) { sets.push(`label=$${i++}`); vals.push(label); }
+    if (options !== undefined) { sets.push(`options=$${i++}`); vals.push(options ? JSON.stringify(options) : null); }
+    if (typeof sensitive === 'boolean') { sets.push(`sensitive=$${i++}`); vals.push(sensitive); }
+    if (!sets.length) return null;
+    vals.push(key);
+    const { rows } = await pool.query(
+      `UPDATE custom_fields SET ${sets.join(', ')} WHERE key=$${i} RETURNING key, label, type, options, sensitive`, vals);
+    return rows[0] || null;
+  },
+  // Removing a field drops its definition AND its stored values, so a deleted field
+  // doesn't linger invisibly inside the JSON of every property.
+  async deleteCustomField(key) {
+    const { rowCount } = await pool.query(`DELETE FROM custom_fields WHERE key=$1`, [key]);
+    if (rowCount) {
+      await pool.query(`UPDATE listings SET custom = (custom::jsonb - $1)::text WHERE custom IS NOT NULL`, [key]);
+    }
+    return rowCount > 0;
+  },
+  // Merge a patch into the listing's custom JSON, so saving one field doesn't wipe
+  // the others.
+  async updateCustomValues(id, patch) {
+    const { rows } = await pool.query(
+      `UPDATE listings
+          SET custom = (COALESCE(custom::jsonb, '{}'::jsonb) || $1::jsonb)::text
+        WHERE id=$2 RETURNING custom`,
+      [JSON.stringify(patch), id]
+    );
+    return rows[0] ? P(rows[0].custom) : null;
   },
 
   // ---- settings (small key/value state that must survive a restart) ----

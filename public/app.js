@@ -623,10 +623,15 @@ function wireDecision(l) {
   const pass = $('#dt-pass'), like = $('#dt-like');
 
   const paint = (status) => {
+    const liked = ['approved', 'processing', 'ready', 'live'].includes(status);
     now.textContent = decisionText(status);
     // Grey out the choice he's already on, so the current state is obvious.
     pass.classList.toggle('chosen', status === 'passed');
-    like.classList.toggle('chosen', ['approved', 'processing', 'ready', 'live'].includes(status));
+    like.classList.toggle('chosen', liked);
+    // Once it's approved, Like is genuinely unavailable: pressing it again would
+    // re-run the image pipeline and duplicate the photos in his Drive.
+    like.disabled = liked;
+    like.title = liked ? 'Already approved — the images are in your Drive' : '';
   };
   paint(l.status);
 
@@ -649,8 +654,12 @@ function wireDecision(l) {
       state.queue = state.queue.filter(x => String(x.id) !== String(l.id));
     } catch (e) {
       now.textContent = e.message;
-    } finally {
       pass.disabled = like.disabled = false;
+    } finally {
+      // Re-enable via paint(), not blindly — otherwise Like would become clickable
+      // again on an approved property and duplicate the Drive folder.
+      pass.disabled = false;
+      paint(l.status);
     }
   };
   pass.onclick = () => decide('pass');

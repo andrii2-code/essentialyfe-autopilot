@@ -96,29 +96,80 @@ async function deliverToDrive(listing, processedImages) {
   const drive = driveClient();
   if (drive && MASTER_ID) {
     try {
-      const folder = await withTimeout(drive.files.create({
-        requestBody: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [MASTER_ID] },
-        fields: 'id, webViewLink',
-        supportsAllDrives: true,
-      }), DRIVE_OP_TIMEOUT, 'create folder');
-      const folderId = folder.data.id;
+      // Reuse the property's existing folder if there is one. Drive happily creates
+      // duplicate folders with the same name, so always creating meant a second run on
+      // the same property left two folders of identical photos in his Drive.
+      let folderId = null, folderUrl = null;
+      try {
+        const found = await withTimeout(drive.files.list({
+          q: `name = '${folderName.replace(/'/g, "\\'")}'`
+             + ` and '${MASTER_ID}' in parents`
+             + ` and mimeType = 'application/vnd.google-apps.folder'`
+             + ` and trashed = false`,
+          fields: 'files(id, webViewLink)',
+          pageSize: 1,
+          supportsAllDrives: true, includeItemsFromAllDrives: true,
+        }), DRIVE_OP_TIMEOUT, 'find folder');
+        if (found.data.files && found.data.files.length) {
+          folderId = found.data.files[0].id;
+          folderUrl = found.data.files[0].webViewLink;
+          console.log(`[drive] reusing existing folder for ${folderName}`);
+        }
+      } catch (e) {
+        console.error('[drive] folder lookup failed, will create:', e.message);
+      }
+
+      if (!folderId) {
+        const folder = await withTimeout(drive.files.create({
+          requestBody: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [MASTER_ID] },
+          fields: 'id, webViewLink',
+          supportsAllDrives: true,
+        }), DRIVE_OP_TIMEOUT, 'create folder');
+        folderId = folder.data.id;
+        folderUrl = folder.data.webViewLink;
+      }
+
+      // Names already in the folder, so a re-run replaces rather than duplicates.
+      const existingByName = new Map();
+      try {
+        const listed = await withTimeout(drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: 'files(id, name)', pageSize: 200,
+          supportsAllDrives: true, includeItemsFromAllDrives: true,
+        }), DRIVE_OP_TIMEOUT, 'list folder');
+        for (const f of listed.data.files || []) existingByName.set(f.name, f.id);
+      } catch (e) {
+        console.error('[drive] listing existing files failed:', e.message);
+      }
+
       let uploaded = 0;
       for (let i = 0; i < processedImages.length; i++) {
         const im = processedImages[i];
         try {
-          await withTimeout(drive.files.create({
-            requestBody: { name: manifest[i].name, parents: [folderId] },
-            media: { mimeType: 'image/jpeg', body: require('stream').Readable.from(im.buf) },
-            fields: 'id',
-            supportsAllDrives: true,
-          }), DRIVE_OP_TIMEOUT, `upload ${manifest[i].name}`);
+          const dupeId = existingByName.get(manifest[i].name);
+          if (dupeId) {
+            // same filename already there — update its content instead of adding a copy
+            await withTimeout(drive.files.update({
+              fileId: dupeId,
+              media: { mimeType: 'image/jpeg', body: require('stream').Readable.from(im.buf) },
+              fields: 'id',
+              supportsAllDrives: true,
+            }), DRIVE_OP_TIMEOUT, `update ${manifest[i].name}`);
+          } else {
+            await withTimeout(drive.files.create({
+              requestBody: { name: manifest[i].name, parents: [folderId] },
+              media: { mimeType: 'image/jpeg', body: require('stream').Readable.from(im.buf) },
+              fields: 'id',
+              supportsAllDrives: true,
+            }), DRIVE_OP_TIMEOUT, `upload ${manifest[i].name}`);
+          }
           uploaded++;
         } catch (e) {
           // one bad photo shouldn't sink the whole delivery
           console.error('[drive] upload failed:', manifest[i].name, e.message);
         }
       }
-      return { mode: 'live', folderId, folderUrl: folder.data.webViewLink, folderName, manifest, uploaded };
+      return { mode: 'live', folderId, folderUrl, folderName, manifest, uploaded };
     } catch (e) {
       // Auth/expired-token/quota/network — log it and fall through to a non-blocking
       // preview result so the listing still completes (status -> ready) instead of

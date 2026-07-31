@@ -262,6 +262,21 @@ app.post('/api/listing/:id/pass', auth.requireAuth, wrap(async (req, res) => {
 }));
 app.post('/api/listing/:id/approve', auth.requireAuth, wrap(async (req, res) => {
   const id = +req.params.id;
+  const existing = await q.get(id);
+  if (!existing) return res.status(404).json({ error: 'not found' });
+
+  // Already approved? Do NOT run the image pipeline again. Every run creates a fresh
+  // Drive folder, so a second Like on an approved property duplicated the photos in
+  // Drive. Re-liking is now a no-op that reports the state it is already in.
+  if (['approved', 'processing', 'ready', 'live'].includes(existing.status)) {
+    return res.json({
+      ok: true, id, status: existing.status, alreadyApproved: true,
+      message: existing.status === 'processing'
+        ? 'Already approved — the images are still being processed.'
+        : 'Already approved — the images are in your Drive.',
+    });
+  }
+
   const l = await q.setStatus(id, 'approved', { approved_at: new Date().toISOString() });
   if (!l) return res.status(404).json({ error: 'not found' });
   // kick processing async; client polls the listing/summary

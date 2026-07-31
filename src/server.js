@@ -325,7 +325,12 @@ app.patch('/api/automation', auth.requireAdmin, wrap(async (req, res) => {
   if (b.intervalMin != null) await q.setSetting('collector.intervalMin', num(b.intervalMin, 15, 1440));
   if (b.limitPerSpec != null) await q.setSetting('collector.limitPerSpec', num(b.limitPerSpec, 1, 40));
   if (typeof b.digestEnabled === 'boolean') await q.setSetting('digest.enabled', b.digestEnabled);
-  if (b.hourUTC != null) await q.setSetting('digest.hourUTC', num(b.hourUTC, 0, 23));
+  // The send hour is his local time (Pacific). Clear any legacy UTC value so it can't
+  // win the fallback in sendHourPT().
+  if (b.hourPT != null) {
+    await q.setSetting('digest.hourPT', num(b.hourPT, 0, 23));
+    await q.deleteSetting('digest.hourUTC');   // drop the legacy value so it can't win
+  }
 
   res.json(await scheduler.status());
 }));

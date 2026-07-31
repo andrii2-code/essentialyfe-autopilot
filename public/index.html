@@ -38,8 +38,11 @@
 <div id="app">
   <!-- Sidebar -->
   <aside class="sidebar">
+    <!-- His supplied logo is the browser-tab icon only; the sidebar keeps the original
+         gold monogram, which he preferred. -->
     <div class="brand">
-      <img class="brand-logo" src="./logo-essentialyfe.png" alt="EssentiaLyfe">
+      <div class="brand-mark">E</div>
+      <div class="brand-name">EssentiaLyfe</div>
     </div>
     <nav class="nav">
       <a class="nav-item active" data-view="dashboard"><span class="ic">◆</span> Dashboard</a>
@@ -139,7 +142,7 @@
             <div class="auto-inline">
               <span class="fld-l">At</span>
               <select class="fld-input" id="auto-hour" style="width:auto"></select>
-              <span class="fld-l">UTC</span>
+              <span class="fld-l">Pacific</span>
             </div>
 
             <div class="digest-msg" id="auto-msg"></div>
@@ -161,8 +164,8 @@
 
     <!-- DATABASE -->
     <section class="view hidden" id="view-database">
-      <div class="view-head"><div><h1 class="serif">Property Database</h1><p class="lede">Everything you approved lands here — structured to your full field list, images cleaned &amp; tagged in your Drive. <b>Click any property to open it and edit your own fields</b> — tier, your rates, contacts, availability and access notes. Export to CSV anytime.</p></div><button class="btn-ghost" id="btn-csv">⬇ Export CSV</button></div>
-      <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr><th></th><th>Address</th><th>Area</th><th>Price</th><th>Tier</th><th>Your rate</th><th>Bd/Ba</th><th>Sq Ft</th><th>Drive</th><th>Status</th></tr></thead><tbody id="db-body"></tbody></table></div>
+      <div class="view-head"><div><h1 class="serif">Property Database</h1><p class="lede">Every property you have is here, whether or not you have approved it yet — structured to your full field list, with images cleaned &amp; tagged in your Drive. <b>Click a row — or "Edit fields" — to fill in your own columns</b>: tier, your rates, contacts, availability, owner temper and access notes. Export to CSV anytime.</p></div><button class="btn-ghost" id="btn-csv">⬇ Export CSV</button></div>
+      <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr><th></th><th>Address</th><th>Area</th><th>Price</th><th>Tier</th><th>Your rate</th><th>Bd/Ba</th><th>Sq Ft</th><th>Drive</th><th>Status</th><th></th></tr></thead><tbody id="db-body"></tbody></table></div>
     </section>
 
     <!-- PRICE CHANGES -->

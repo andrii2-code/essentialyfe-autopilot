@@ -328,6 +328,28 @@ const q = {
     return rowCount;
   },
 
+  // Which of these properties do we already have? Keyed on address the same way the
+  // unique constraint is, and matched case-insensitively so "123 Main St" and
+  // "123 main st" are the same property. Returns a Map of "street|city" -> {id, price},
+  // so the collector can skip a known property before spending an AI call on it.
+  async knownProperties(pairs) {
+    const out = new Map();
+    const streets = [...new Set((pairs || [])
+      .map(p => (p.streetLine || '').toLowerCase().trim())
+      .filter(Boolean))];
+    if (!streets.length) return out;
+    const { rows } = await pool.query(
+      `SELECT id, street_line, city, price FROM listings
+        WHERE lower(trim(street_line)) = ANY($1::text[])`,
+      [streets]
+    );
+    for (const r of rows) {
+      out.set(`${(r.street_line || '').toLowerCase().trim()}|${(r.city || '').toLowerCase().trim()}`,
+              { id: r.id, price: r.price == null ? null : Number(r.price) });
+    }
+    return out;
+  },
+
   // ---- settings (small key/value state that must survive a restart) ----
   async getSetting(key, fallback = null) {
     const { rows } = await pool.query(`SELECT v FROM settings WHERE k=$1`, [key]);
@@ -341,6 +363,9 @@ const q = {
       [key, JSON.stringify(value)]
     );
     return value;
+  },
+  async deleteSetting(key) {
+    await pool.query(`DELETE FROM settings WHERE k=$1`, [key]);
   },
   async allSettings() {
     const { rows } = await pool.query(`SELECT k, v FROM settings`);

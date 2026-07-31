@@ -66,8 +66,6 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .brand{display:flex;align-items:center;gap:10px;padding:22px 20px 26px}
 .brand-mark{width:30px;height:30px;border-radius:7px;background:linear-gradient(135deg,var(--gold),var(--gold-d));color:#1a1300;display:grid;place-items:center;font-family:Fraunces,serif;font-weight:600;font-size:18px}
 .brand-name{font-weight:600;letter-spacing:.02em;color:#fff}
-/* His supplied wordmark. The artwork is white, so it sits directly on the navy. */
-.brand-logo{width:150px;max-width:100%;height:auto;display:block}
 .nav{display:flex;flex-direction:column;gap:2px;padding:0 12px;flex:1}
 .nav-item{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:8px;color:#aab6c8;font-size:14px;font-weight:500;cursor:pointer;text-decoration:none}
 .nav-item .ic{width:16px;text-align:center;opacity:.8;font-size:13px}
@@ -212,7 +210,7 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
   .dt-cols{grid-template-columns:1fr}
   .sidebar{width:64px}.brand-name,.nav-item span:not(.ic),.badge,.nav-sep,.sidebar-foot{display:none}
   /* collapsed rail: shrink the wordmark and drop its side padding so it still fits */
-  .brand{padding:18px 8px 20px;justify-content:center}.brand-logo{width:46px}
+  .brand{padding:18px 8px 20px;justify-content:center}
   .topbar{grid-template-columns:repeat(3,1fr)}
 }
 
@@ -242,6 +240,11 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .auth-link:hover{color:var(--ink)}
 /* explanatory line inside the auth card (forgot / reset flows) */
 .auth-note{color:var(--muted);font-size:13px;line-height:1.5}
+
+/* ---- "Edit fields" button in the property table ---- */
+.row-edit{font:inherit;font-size:12px;font-weight:500;padding:5px 11px;border-radius:7px;
+  border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;white-space:nowrap}
+.row-edit:hover{border-color:var(--gold);color:var(--gold-d)}
 
 /* ---- price changes ---- */
 .price-filters{display:flex;align-items:center;gap:14px}

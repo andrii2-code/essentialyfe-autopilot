@@ -25,9 +25,34 @@ async function collectListings(opts) {
 // how many properties he had never seen, and how many known ones moved price.
 async function runCollector({ limitPerSpec = 12 } = {}) {
   const recs = await collectListings({ limitPerSpec });
-  let kept = 0;
+
+  // Which of these do we already hold? One query up front, so a property he already has
+  // is recognised BEFORE any work is done on it. Previously every listing went through
+  // enrich() — an AI call — even when it was about to be discarded as a duplicate.
+  const known = await q.knownProperties(
+    recs.map(r => ({ streetLine: r.streetLine, city: r.city })));
+  const keyOf = (r) => `${(r.streetLine || '').toLowerCase().trim()}|${(r.city || '').toLowerCase().trim()}`;
+
+  let kept = 0, skipped = 0;
   const priceChanges = [];
+
   for (const r of recs) {
+    const seen = known.get(keyOf(r));
+
+    if (seen) {
+      // Already his. The only thing still worth recording is a price move, and that
+      // needs no enrichment — just the new price against the stored one.
+      if (r.price != null && Number(r.price) !== Number(seen.price)) {
+        const res = await upsertListing(r);
+        if (res.priceChanged) {
+          priceChanges.push({ id: res.id, address: r.streetLine || r.address, from: res.from, to: res.to });
+        }
+      } else {
+        skipped++;   // identical to what he has: don't download, don't enrich, don't store
+      }
+      continue;
+    }
+
     const enriched = await enrich(r);
     const res = await upsertListing(enriched);
     if (res.inserted) kept++;
@@ -35,10 +60,12 @@ async function runCollector({ limitPerSpec = 12 } = {}) {
       priceChanges.push({ id: res.id, address: enriched.streetLine || enriched.address, from: res.from, to: res.to });
     }
   }
+
   const note = `collector: ${kept} new of ${recs.length}`
+    + (skipped ? `, ${skipped} already yours (skipped)` : '')
     + (priceChanges.length ? `, ${priceChanges.length} price change${priceChanges.length === 1 ? '' : 's'}` : '');
   await q.newRun(recs.length, kept, note);
-  return { sourced: recs.length, kept, priceChanges };
+  return { sourced: recs.length, kept, skipped, priceChanges };
 }
 
 // ---- on approval: run the image pipeline for real, then hand to Drive ----

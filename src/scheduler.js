@@ -15,7 +15,8 @@
 //   collector.limitPerSpec number  listings pulled per spec per pass
 //   collector.lastRunAt    ISO     when the last automatic pass finished
 //   digest.enabled         bool    send the daily email automatically
-//   digest.hourUTC         number  hour (UTC) to send it
+//   digest.hourPT          number  hour to send it, in HIS time (Los Angeles)
+//   digest.hourUTC         number  legacy: an hour stored in UTC, migrated on read
 //   digest.lastSentDate    string  YYYY-MM-DD of the last send, so it goes once a day
 
 const { q } = require('./db');
@@ -29,8 +30,36 @@ const DEFAULTS = {
   'collector.intervalMin': 180,
   'collector.limitPerSpec': 12,
   'digest.enabled': true,
-  'digest.hourUTC': 13,            // ~6am Los Angeles, so it's waiting when he starts
+  'digest.hourPT': 6,              // 6am Los Angeles, so it's waiting when he starts
 };
+
+// His timezone. The email time is stored in HIS hours, not UTC, because a fixed UTC
+// hour drifts by one when daylight saving starts and ends — 6am Pacific is 13:00 UTC in
+// winter but 14:00 in summer.
+const TZ = 'America/Los_Angeles';
+
+// What hour is it right now where he is?
+function hourInPT(d = new Date()) {
+  return Number(new Intl.DateTimeFormat('en-US', {
+    timeZone: TZ, hour: 'numeric', hour12: false,
+  }).format(d));
+}
+
+// Today's calendar date where he is. Used for the once-a-day guard, so "today" means
+// his today — otherwise an evening email would look like a second one for the same day.
+function dateInPT(d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d);
+}
+
+// The UTC offset of his timezone at a given moment, in minutes (handles DST).
+function ptOffsetMinutes(d = new Date()) {
+  const s = new Intl.DateTimeFormat('en-US', { timeZone: TZ, timeZoneName: 'longOffset' }).format(d);
+  const m = s.match(/GMT([+-])(\d{2}):(\d{2})/);
+  if (!m) return -8 * 60;
+  return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
+}
 
 let timer = null;
 let running = false;               // guards against overlapping passes
@@ -61,23 +90,33 @@ async function runCollectorPass({ manual = false } = {}) {
 
 // ---- daily email ----
 // Keyed on the calendar date rather than an interval, so it lands at a predictable
-// hour and a restart at 13:30 can't trigger a second send for the same day.
-function utcDate(d = new Date()) { return d.toISOString().slice(0, 10); }
+// hour and a restart 30 minutes later can't trigger a second send for the same day.
+
+// The send hour, in HIS time. Reads the new setting, and falls back to converting a
+// legacy UTC hour so an existing deployment keeps roughly the time he had chosen.
+async function sendHourPT() {
+  const pt = await q.getSetting('digest.hourPT', null);
+  if (pt !== null && pt !== undefined) return Number(pt);
+  const legacy = await q.getSetting('digest.hourUTC', null);
+  if (legacy !== null && legacy !== undefined) {
+    const offset = ptOffsetMinutes() / 60;            // e.g. -7 in summer
+    return ((Number(legacy) + offset) % 24 + 24) % 24;
+  }
+  return DEFAULTS['digest.hourPT'];
+}
 
 async function digestDue() {
   if (!(await setting('digest.enabled'))) return false;
-  const hour = await setting('digest.hourUTC');
-  const now = new Date();
-  if (now.getUTCHours() < hour) return false;
+  if (hourInPT() < (await sendHourPT())) return false;
   const lastSent = await q.getSetting('digest.lastSentDate', null);
-  return lastSent !== utcDate(now);
+  return lastSent !== dateInPT();
 }
 
 async function runDigestPass() {
   const r = await sendDigest({ days: 1, force: false });
   // Stamp the date even when there was nothing to report: the point is one attempt a
   // day, and re-checking every minute for a quiet day is pointless noise.
-  await q.setSetting('digest.lastSentDate', utcDate());
+  await q.setSetting('digest.lastSentDate', dateInPT());
   console.log(`[scheduler] daily email: ${r.sent ? 'sent' : 'not sent'}`
     + ` (${r.newCount} new, ${r.priceChangeCount} price changes)`
     + (r.reason ? ` — ${r.reason}` : ''));
@@ -137,12 +176,21 @@ async function status() {
       : 'due now';
   }
 
-  // Next daily email: today at the hour if it hasn't gone yet, else tomorrow.
+  // Next daily email: today at his hour if it hasn't gone yet, else tomorrow. Built
+  // from the Pacific date + hour and converted back to an instant, so it stays correct
+  // across a daylight-saving change.
   const now = new Date();
+  const hourPT = await sendHourPT();
   let nextDigestAt = null;
   if (s['digest.enabled']) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), s['digest.hourUTC'], 0, 0));
-    if (lastSentDate === utcDate(now) || now.getTime() > d.getTime()) d.setUTCDate(d.getUTCDate() + 1);
+    const [y, m, day] = dateInPT(now).split('-').map(Number);
+    const asUtc = (yy, mm, dd) =>
+      new Date(Date.UTC(yy, mm - 1, dd, hourPT, 0, 0) - ptOffsetMinutes(now) * 60000);
+    let d = asUtc(y, m, day);
+    if (lastSentDate === dateInPT(now) || now.getTime() > d.getTime()) {
+      const t = new Date(Date.UTC(y, m - 1, day) + 864e5);
+      d = asUtc(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate());
+    }
     nextDigestAt = d.toISOString();
   }
 
@@ -157,7 +205,8 @@ async function status() {
     },
     digest: {
       enabled: s['digest.enabled'],
-      hourUTC: s['digest.hourUTC'],
+      hourPT,                       // his time, not UTC
+      timezone: 'PT',
       lastSentDate, nextDigestAt,
     },
     lastError,

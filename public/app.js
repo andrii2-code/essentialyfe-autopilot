@@ -116,7 +116,7 @@ async function refreshSummary() {
   $('#s-live').textContent = c.ready + c.live; // "in your Drive" = delivered
   $('#badge-review').textContent = c.in_review;
   $('#badge-processing').textContent = c.processing;
-  $('#badge-db').textContent = c.ready + c.live;
+  $('#badge-db').textContent = c.sourced; // the database page lists every property
   $('#drive-mode').textContent = 'Drive: ' + s.driveMode;
 }
 
@@ -253,8 +253,11 @@ async function renderDatabase() {
   const body = $('#db-body');
   if (!body.children.length) body.innerHTML = `<tr><td colspan="10" class="muted" style="padding:18px">Loading…</td></tr>`;
   await refreshSummary();
-  const rows = await api('/ready');
-  if (!rows.length) { body.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">No approved properties yet.</td></tr>`; return; }
+  // Every property he has, not just the approved ones. Showing only 'ready' meant the
+  // database page listed 2 rows out of 60-odd, so the field editing he asked for looked
+  // like it wasn't there — the fields live on the property, whatever its status.
+  const rows = await api('/listings');
+  if (!rows.length) { body.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">No properties yet. Run the collector to pull today's listings.</td></tr>`; return; }
   body.innerHTML = rows.map(l => {
     const nImg = (l.images || []).length;
     // His own fields, surfaced in the table so the manual data is visible at a glance.
@@ -275,12 +278,19 @@ async function renderDatabase() {
       <td class="t-price">${fmt(l.price)}</td>
       <td><div class="t-tags">${tier}</div></td>
       <td>${rate}</td>
-      <td>${l.beds}/${l.baths}</td>
+      <td>${l.beds ?? '—'}/${l.baths ?? '—'}</td>
       <td>${l.sqft ? l.sqft.toLocaleString() : '—'}</td>
       <td>${drive}</td>
-      <td><span class="pill ${l.status}">${l.status === 'ready' ? 'Ready' : l.status}</span></td>
+      <td><span class="pill ${l.status}">${statusLabel(l.status)}</span></td>
+      <td><button class="row-edit" data-edit="${l.id}">Edit fields</button></td>
     </tr>`;
   }).join('');
+}
+
+// The status values are internal; show him words instead.
+function statusLabel(s) {
+  return { in_review: 'In review', approved: 'Approved', processing: 'Processing',
+           ready: 'Ready', live: 'In Drive', passed: 'Passed' }[s] || s;
 }
 
 $('#btn-csv')?.addEventListener('click', async () => {
@@ -299,7 +309,20 @@ $('#btn-csv')?.addEventListener('click', async () => {
 });
 
 // ---------- detail overlay ----------
+// The explicit "Edit fields" button — same overlay as clicking the row, but visible,
+// because he looked for field editing and didn't find it.
 document.addEventListener('click', async e => {
+  const btn = e.target.closest('[data-edit]');
+  if (!btn) return;
+  e.stopPropagation();
+  const l = await api('/listing/' + btn.dataset.edit);
+  openDetail(l);
+  // jump straight to his columns rather than making him scroll past the feed data
+  setTimeout(() => $('#dt-editable')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 350);
+});
+
+document.addEventListener('click', async e => {
+  if (e.target.closest('[data-edit]')) return; // handled above
   const row = e.target.closest('[data-id]');
   if (!row) return;
   if (e.target.closest('.act') || e.target.closest('a')) return;
@@ -508,16 +531,20 @@ async function renderAutomation() {
   // hour picker
   const hourSel = $('#auto-hour');
   if (!hourSel.options.length) {
-    hourSel.innerHTML = Array.from({ length: 24 }, (_, h) =>
-      `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
+    // 12-hour labels, because that's how he'd say the time — and the value is his
+    // local hour, so there is no timezone maths for him to do.
+    hourSel.innerHTML = Array.from({ length: 24 }, (_, h) => {
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      return `<option value="${h}">${h12}:00 ${h < 12 ? 'am' : 'pm'}</option>`;
+    }).join('');
   }
-  hourSel.value = String(s.digest.hourUTC);
+  hourSel.value = String(s.digest.hourPT);
   $('#auto-digest').checked = !!s.digest.enabled;
   $('#auto-digest-state').textContent = s.digest.enabled ? 'on' : 'off';
   $('#auto-digest-state').className = 'auto-state ' + (s.digest.enabled ? 'on' : 'off');
-  const local = new Date(Date.UTC(2000, 0, 1, s.digest.hourUTC)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // The hour is already his own time, so no conversion to show.
   $('#auto-digest-sub').innerHTML = s.digest.enabled
-    ? `Next ${esc(whenText(s.digest.nextDigestAt))} · ${esc(local)} your time`
+    ? `Next ${esc(whenText(s.digest.nextDigestAt))}`
     : `Off — no daily email will be sent.`;
 
   if (s.mailMode === 'log') {
@@ -550,7 +577,7 @@ $('#auto-digest')?.addEventListener('change', e =>
   saveAutomation({ digestEnabled: e.target.checked },
     e.target.checked ? 'Daily email is on.' : 'Daily email off.'));
 $('#auto-hour')?.addEventListener('change', e =>
-  saveAutomation({ hourUTC: +e.target.value }));
+  saveAutomation({ hourPT: +e.target.value }));
 
 // ---------- price changes ----------
 async function renderPrices() {

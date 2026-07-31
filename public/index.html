@@ -165,7 +165,39 @@
     <!-- DATABASE -->
     <section class="view hidden" id="view-database">
       <div class="view-head"><div><h1 class="serif">Property Database</h1><p class="lede">Every property you have is here, whether or not you have approved it yet — structured to your full field list, with images cleaned &amp; tagged in your Drive. <b>Click a row — or "Edit fields" — to fill in your own columns</b>: tier, your rates, contacts, availability, owner temper and access notes. Export to CSV anytime.</p></div><button class="btn-ghost" id="btn-csv">⬇ Export CSV</button></div>
-      <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr><th></th><th>Address</th><th>Area</th><th>Price</th><th>Tier</th><th>Your rate</th><th>Bd/Ba</th><th>Sq Ft</th><th>Drive</th><th>Status</th><th></th></tr></thead><tbody id="db-body"></tbody></table></div>
+      <!-- Filters + sort. Column headers are also clickable to sort. -->
+      <div class="tbl-controls">
+        <input class="fld-input" id="db-search" type="search" placeholder="Search address or area…" style="max-width:260px">
+        <select class="fld-input" id="db-f-status" style="width:auto">
+          <option value="">All statuses</option>
+          <option value="in_review">In review</option>
+          <option value="approved">Approved</option>
+          <option value="processing">Processing</option>
+          <option value="ready">Ready</option>
+          <option value="live">In Drive</option>
+          <option value="passed">Passed</option>
+        </select>
+        <select class="fld-input" id="db-f-area" style="width:auto"><option value="">All areas</option></select>
+        <select class="fld-input" id="db-f-tier" style="width:auto">
+          <option value="">All tiers</option>
+          <option value="A">Tier A</option><option value="B">Tier B</option>
+          <option value="C">Tier C</option><option value="D">Tier D</option>
+          <option value="__none">No tier set</option>
+        </select>
+        <select class="fld-input" id="db-sort" style="width:auto">
+          <option value="price:desc">Price · high to low</option>
+          <option value="price:asc">Price · low to high</option>
+          <option value="created_at:desc">Newest first</option>
+          <option value="created_at:asc">Oldest first</option>
+          <option value="street_line:asc">Address · A–Z</option>
+          <option value="street_line:desc">Address · Z–A</option>
+          <option value="sqft:desc">Largest first</option>
+          <option value="status:asc">Status</option>
+        </select>
+        <button class="row-edit hidden" id="db-clear">Clear filters</button>
+      </div>
+
+      <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr><th></th><th class="sortable" data-sort="street_line">Address</th><th class="sortable" data-sort="area">Area</th><th class="sortable" data-sort="price">Price</th><th class="sortable" data-sort="tier">Tier</th><th>Your rate</th><th>Bd/Ba</th><th class="sortable" data-sort="sqft">Sq Ft</th><th>Drive</th><th class="sortable" data-sort="status">Status</th><th></th></tr></thead><tbody id="db-body"></tbody></table></div>
 
       <!-- Pagination. Matters more once his own 7,000-property sheet is imported. -->
       <div class="pager" id="db-pager">

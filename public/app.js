@@ -271,9 +271,15 @@ async function renderDatabase({ refetch = true } = {}) {
     // like it wasn't there — the fields live on the property, whatever its status.
     dbRows = await api('/listings');
   }
-  const all = dbRows;
+  populateAreaFilter(dbRows);
+  const all = applyFiltersAndSort(dbRows);
   if (!all.length) {
-    body.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">No properties yet. Run the collector to pull today's listings.</td></tr>`;
+    // Distinguish "you have none" from "your filters matched none" — otherwise a
+    // forgotten filter looks like lost data.
+    body.innerHTML = dbRows.length
+      ? `<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">No properties match these filters. <a class="link" id="db-clear-inline">Clear them</a></td></tr>`
+      : `<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">No properties yet. Run the collector to pull today's listings.</td></tr>`;
+    $('#db-clear-inline')?.addEventListener('click', clearDbFilters);
     updatePager(0, 0, 0);
     return;
   }
@@ -318,6 +324,127 @@ async function renderDatabase({ refetch = true } = {}) {
   }).join('');
 }
 
+// ---------- filtering + sorting ----------
+// Filters are remembered per browser, so coming back to the page keeps the view he set
+// up rather than resetting to everything.
+const dbFilters = {
+  get() {
+    try { return JSON.parse(localStorage.getItem('esl-db-filters') || '{}'); } catch { return {}; }
+  },
+  set(patch) {
+    const next = { ...this.get(), ...patch };
+    try { localStorage.setItem('esl-db-filters', JSON.stringify(next)); } catch {}
+    return next;
+  },
+};
+
+// The area list comes from his actual data, not a hardcoded list.
+function populateAreaFilter(rows) {
+  const sel = $('#db-f-area');
+  if (!sel || sel.options.length > 1) return;   // build once
+  const areas = [...new Set(rows.map(r => r.area || r.city).filter(Boolean))].sort();
+  sel.insertAdjacentHTML('beforeend',
+    areas.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join(''));
+}
+
+function applyFiltersAndSort(rows) {
+  const f = dbFilters.get();
+  // reflect the stored values in the controls
+  const search = $('#db-search'), status = $('#db-f-status'), area = $('#db-f-area'),
+        tier = $('#db-f-tier'), sort = $('#db-sort');
+  if (search && document.activeElement !== search) search.value = f.q || '';
+  if (status) status.value = f.status || '';
+  if (area) area.value = f.area || '';
+  if (tier) tier.value = f.tier || '';
+  if (sort) sort.value = f.sort || 'price:desc';
+
+  const q = (f.q || '').toLowerCase().trim();
+  let out = rows.filter(r => {
+    if (f.status && r.status !== f.status) return false;
+    if (f.area && (r.area || r.city) !== f.area) return false;
+    if (f.tier === '__none') { if (r.tier) return false; }
+    else if (f.tier && r.tier !== f.tier) return false;
+    if (q) {
+      const hay = `${r.street_line || ''} ${r.address || ''} ${r.area || ''} ${r.city || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const [key, dir] = (f.sort || 'price:desc').split(':');
+  const sign = dir === 'asc' ? 1 : -1;
+  // Nulls always sort last, whichever direction — an unpriced property at the top of a
+  // "highest price" list would be nonsense.
+  // Sort on what the column actually DISPLAYS. The address cell falls back to the full
+  // address when street_line is empty, so sorting the raw street_line put those rows in
+  // a position that didn't match what he could see.
+  const valueOf = (r) => key === 'street_line' ? (r.street_line || r.address)
+    : key === 'area' ? (r.area || r.city)
+    : r[key];
+
+  out = out.slice().sort((a, b) => {
+    const av = valueOf(a), bv = valueOf(b);
+    const aNull = av == null || av === '', bNull = bv == null || bv === '';
+    if (aNull && bNull) return 0;
+    if (aNull) return 1;
+    if (bNull) return -1;
+    if (typeof av === 'number' || typeof bv === 'number' || /^\d+$/.test(String(av))) {
+      return (Number(av) - Number(bv)) * sign;
+    }
+    return String(av).localeCompare(String(bv)) * sign;
+  });
+
+  // Show the "clear" button only when something is actually filtering.
+  const active = !!(f.q || f.status || f.area || f.tier);
+  $('#db-clear')?.classList.toggle('hidden', !active);
+  markSortedHeader(key, dir);
+  return out;
+}
+
+function markSortedHeader(key, dir) {
+  $$('#db-table th.sortable').forEach(th => {
+    const on = th.dataset.sort === key;
+    th.classList.toggle('sorted', on);
+    th.dataset.dir = on ? dir : '';
+  });
+}
+
+function clearDbFilters() {
+  try { localStorage.removeItem('esl-db-filters'); } catch {}
+  dbPage.index = 0;
+  renderDatabase({ refetch: false });
+}
+
+const onFilterChange = (patch) => {
+  dbFilters.set(patch);
+  dbPage.index = 0;      // a changed filter means starting from the first page again
+  renderDatabase({ refetch: false });
+};
+
+$('#db-f-status')?.addEventListener('change', e => onFilterChange({ status: e.target.value }));
+$('#db-f-area')?.addEventListener('change', e => onFilterChange({ area: e.target.value }));
+$('#db-f-tier')?.addEventListener('change', e => onFilterChange({ tier: e.target.value }));
+$('#db-sort')?.addEventListener('change', e => onFilterChange({ sort: e.target.value }));
+$('#db-clear')?.addEventListener('click', clearDbFilters);
+
+// Debounced so it filters as he types without re-rendering on every keystroke.
+let searchTimer = null;
+$('#db-search')?.addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  const v = e.target.value;
+  searchTimer = setTimeout(() => onFilterChange({ q: v }), 200);
+});
+
+// Clicking a column header sorts by it; clicking the same one again reverses.
+$$('#db-table th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    const cur = (dbFilters.get().sort || 'price:desc').split(':');
+    const dir = cur[0] === key && cur[1] === 'asc' ? 'desc' : 'asc';
+    onFilterChange({ sort: `${key}:${dir}` });
+  });
+});
+
 // Pager readout + button state. Says "1–50 of 75" rather than just a page number, so
 // he can see how much there is without counting.
 function updatePager(total, start, shown, pages = 1) {
@@ -360,9 +487,9 @@ function statusLabel(s) {
 }
 
 $('#btn-csv')?.addEventListener('click', async () => {
-  // Export everything the table lists — all properties, not just the current page and
-  // not just the approved ones.
-  const rows = dbRows.length ? dbRows : await api('/listings');
+  // Export exactly what the table is showing him — every page of it, with his filters
+  // and sort applied, rather than the raw unfiltered set.
+  const rows = dbRows.length ? applyFiltersAndSort(dbRows) : await api('/listings');
   // Feed/AI columns first, then his own fields — restricted ones only if he may see
   // them (the API already omits those values otherwise, so this keeps headers honest).
   const defs = await loadFieldDefs();
@@ -420,6 +547,16 @@ function openDetail(l) {
       <div class="dt-addr"><h2>${esc(l.street_line || l.address)}</h2><div class="sub">${esc(l.area || l.city)}, ${esc(l.state)} ${esc(l.zip || '')}</div></div>
     </div>
     <div class="dt-body">
+      <!-- Review from here too, so he can decide straight from the database rather than
+           having to find the property again in the review queue. -->
+      <div class="dt-decide" id="dt-decide">
+        <div class="dt-decide-now" id="dt-decide-now">${decisionText(l.status)}</div>
+        <div class="dt-decide-acts">
+          <button class="act pass" id="dt-pass">✕ Pass</button>
+          <button class="act like" id="dt-like">♡ Like</button>
+        </div>
+      </div>
+
       <div class="dt-cols">
         <div>
           <div class="dt-field"><span class="k">Price</span><span class="v">${fmt(l.price)}${l.is_rental ? '/mo' : ''}</span></div>
@@ -464,7 +601,60 @@ function openDetail(l) {
   $('#detail-overlay').classList.remove('hidden');
   $('#dt-close').onclick = () => $('#detail-overlay').classList.add('hidden');
   $('#detail-overlay').onclick = (ev) => { if (ev.target.id === 'detail-overlay') $('#detail-overlay').classList.add('hidden'); };
+  wireDecision(l);
   mountEditableFields(l);
+}
+
+// What the decision bar says about where this property currently stands.
+function decisionText(status) {
+  if (status === 'passed') return 'You passed on this one.';
+  if (['approved', 'processing'].includes(status)) return 'Liked — images are being processed.';
+  if (['ready', 'live'].includes(status)) return 'Liked — cleaned images are in your Drive.';
+  return 'Not reviewed yet.';
+}
+
+// Pass / Like from the detail overlay. Same endpoints the review queue uses, but it
+// stays on the property instead of advancing to the next card, because here he opened
+// this one deliberately.
+function wireDecision(l) {
+  const bar = $('#dt-decide');
+  if (!bar) return;
+  const now = $('#dt-decide-now');
+  const pass = $('#dt-pass'), like = $('#dt-like');
+
+  const paint = (status) => {
+    now.textContent = decisionText(status);
+    // Grey out the choice he's already on, so the current state is obvious.
+    pass.classList.toggle('chosen', status === 'passed');
+    like.classList.toggle('chosen', ['approved', 'processing', 'ready', 'live'].includes(status));
+  };
+  paint(l.status);
+
+  const decide = async (action) => {
+    pass.disabled = like.disabled = true;
+    now.textContent = action === 'approve' ? 'Liking…' : 'Passing…';
+    try {
+      await api(`/listing/${l.id}/${action}`, { method: 'POST' });
+      l.status = action === 'approve' ? 'approved' : 'passed';
+      paint(l.status);
+      await refreshSummary();
+      // Refresh the table underneath without losing his page, filters or sort.
+      if (document.querySelector('.nav-item.active')?.dataset.view === 'database') {
+        const keep = dbPage.index;
+        const row = dbRows.find(r => String(r.id) === String(l.id));
+        if (row) row.status = l.status;          // update in place — no refetch needed
+        dbPage.index = keep;
+        renderDatabase({ refetch: false });
+      }
+      state.queue = state.queue.filter(x => String(x.id) !== String(l.id));
+    } catch (e) {
+      now.textContent = e.message;
+    } finally {
+      pass.disabled = like.disabled = false;
+    }
+  };
+  pass.onclick = () => decide('pass');
+  like.onclick = () => decide('approve');
 }
 
 // ---------- his own fields: the editable half of a property ----------

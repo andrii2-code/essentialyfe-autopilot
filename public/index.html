@@ -166,6 +166,27 @@
     <section class="view hidden" id="view-database">
       <div class="view-head"><div><h1 class="serif">Property Database</h1><p class="lede">Every property you have is here, whether or not you have approved it yet — structured to your full field list, with images cleaned &amp; tagged in your Drive. <b>Click a row — or "Edit fields" — to fill in your own columns</b>: tier, your rates, contacts, availability, owner temper and access notes. Export to CSV anytime.</p></div><button class="btn-ghost" id="btn-csv">⬇ Export CSV</button></div>
       <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr><th></th><th>Address</th><th>Area</th><th>Price</th><th>Tier</th><th>Your rate</th><th>Bd/Ba</th><th>Sq Ft</th><th>Drive</th><th>Status</th><th></th></tr></thead><tbody id="db-body"></tbody></table></div>
+
+      <!-- Pagination. Matters more once his own 7,000-property sheet is imported. -->
+      <div class="pager" id="db-pager">
+        <div class="pager-left">
+          <span class="fld-l">Show</span>
+          <select class="fld-input" id="db-per-page" style="width:auto">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+            <option value="250">250</option>
+            <option value="all">All</option>
+          </select>
+          <span class="fld-l">per page</span>
+        </div>
+        <div class="pager-right">
+          <span class="pager-count" id="db-count"></span>
+          <button class="row-edit" id="db-prev">← Prev</button>
+          <span class="pager-page" id="db-page"></span>
+          <button class="row-edit" id="db-next">Next →</button>
+        </div>
+      </div>
     </section>
 
     <!-- PRICE CHANGES -->

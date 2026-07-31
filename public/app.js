@@ -249,15 +249,46 @@ async function renderProcessing() {
 }
 
 // ---------- database ----------
-async function renderDatabase() {
+// Page state. Kept in localStorage so his "show 100 per page" choice survives a reload
+// rather than resetting every time he opens the page.
+const dbPage = {
+  index: 0,
+  get perPage() {
+    const v = localStorage.getItem('esl-db-per-page');
+    return v === 'all' ? 'all' : (Number(v) || 50);
+  },
+  set perPage(v) { try { localStorage.setItem('esl-db-per-page', String(v)); } catch {} },
+};
+let dbRows = [];   // the full set; paging slices this rather than refetching
+
+async function renderDatabase({ refetch = true } = {}) {
   const body = $('#db-body');
-  if (!body.children.length) body.innerHTML = `<tr><td colspan="10" class="muted" style="padding:18px">Loading…</td></tr>`;
-  await refreshSummary();
-  // Every property he has, not just the approved ones. Showing only 'ready' meant the
-  // database page listed 2 rows out of 60-odd, so the field editing he asked for looked
-  // like it wasn't there — the fields live on the property, whatever its status.
-  const rows = await api('/listings');
-  if (!rows.length) { body.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">No properties yet. Run the collector to pull today's listings.</td></tr>`; return; }
+  if (!body.children.length) body.innerHTML = `<tr><td colspan="11" class="muted" style="padding:18px">Loading…</td></tr>`;
+  if (refetch) {
+    await refreshSummary();
+    // Every property he has, not just the approved ones. Showing only 'ready' meant the
+    // database page listed 2 rows out of 60-odd, so the field editing he asked for looked
+    // like it wasn't there — the fields live on the property, whatever its status.
+    dbRows = await api('/listings');
+  }
+  const all = dbRows;
+  if (!all.length) {
+    body.innerHTML = `<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">No properties yet. Run the collector to pull today's listings.</td></tr>`;
+    updatePager(0, 0, 0);
+    return;
+  }
+
+  const per = dbPage.perPage;
+  const sel = $('#db-per-page');
+  if (sel) sel.value = String(per);   // reflect the remembered choice
+  const size = per === 'all' ? all.length : per;
+  const pages = Math.max(1, Math.ceil(all.length / size));
+  if (dbPage.index >= pages) dbPage.index = pages - 1;   // e.g. after switching to a bigger page size
+  if (dbPage.index < 0) dbPage.index = 0;
+  const start = dbPage.index * size;
+  const rows = all.slice(start, start + size);
+  updatePager(all.length, start, rows.length, pages);
+
   body.innerHTML = rows.map(l => {
     const nImg = (l.images || []).length;
     // His own fields, surfaced in the table so the manual data is visible at a glance.
@@ -287,6 +318,41 @@ async function renderDatabase() {
   }).join('');
 }
 
+// Pager readout + button state. Says "1–50 of 75" rather than just a page number, so
+// he can see how much there is without counting.
+function updatePager(total, start, shown, pages = 1) {
+  const count = $('#db-count'), page = $('#db-page');
+  const prev = $('#db-prev'), next = $('#db-next');
+  if (!count) return;
+  count.textContent = total
+    ? `${start + 1}–${start + shown} of ${total}`
+    : 'No properties';
+  page.textContent = pages > 1 ? `Page ${dbPage.index + 1} of ${pages}` : '';
+  const onlyOne = pages <= 1;
+  // Hide the arrows entirely when everything fits — dead controls are just noise.
+  prev.classList.toggle('hidden', onlyOne);
+  next.classList.toggle('hidden', onlyOne);
+  prev.disabled = dbPage.index === 0;
+  next.disabled = dbPage.index >= pages - 1;
+}
+
+$('#db-per-page')?.addEventListener('change', (e) => {
+  dbPage.perPage = e.target.value;
+  dbPage.index = 0;                      // a new page size means starting from the top
+  renderDatabase({ refetch: false });    // already have the rows; just re-slice
+});
+$('#db-prev')?.addEventListener('click', () => {
+  if (dbPage.index > 0) { dbPage.index--; renderDatabase({ refetch: false }); scrollTableTop(); }
+});
+$('#db-next')?.addEventListener('click', () => {
+  dbPage.index++; renderDatabase({ refetch: false }); scrollTableTop();
+});
+// Changing page should put him at the top of the table, not partway down the previous
+// scroll position.
+function scrollTableTop() {
+  $('#view-database')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
 // The status values are internal; show him words instead.
 function statusLabel(s) {
   return { in_review: 'In review', approved: 'Approved', processing: 'Processing',
@@ -294,7 +360,9 @@ function statusLabel(s) {
 }
 
 $('#btn-csv')?.addEventListener('click', async () => {
-  const rows = await api('/ready');
+  // Export everything the table lists — all properties, not just the current page and
+  // not just the approved ones.
+  const rows = dbRows.length ? dbRows : await api('/listings');
   // Feed/AI columns first, then his own fields — restricted ones only if he may see
   // them (the API already omits those values otherwise, so this keeps headers honest).
   const defs = await loadFieldDefs();
@@ -490,7 +558,11 @@ async function mountEditableFields(listing) {
         initial[el.dataset.key] = el.value;
       });
       status(`Saved ${d.updated} field${d.updated === 1 ? '' : 's'}.`, 'ok');
-      if (document.querySelector('.nav-item.active')?.dataset.view === 'database') renderDatabase();
+      // Refresh the table but keep him on the page he was editing from.
+      if (document.querySelector('.nav-item.active')?.dataset.view === 'database') {
+        const keep = dbPage.index;
+        renderDatabase().then(() => { dbPage.index = keep; renderDatabase({ refetch: false }); });
+      }
     } catch (e) {
       status(e.message, 'err');
     } finally {

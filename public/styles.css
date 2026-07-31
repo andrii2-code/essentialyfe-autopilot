@@ -246,6 +246,13 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
   border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;white-space:nowrap}
 .row-edit:hover{border-color:var(--gold);color:var(--gold-d)}
 
+/* ---- table pagination ---- */
+.pager{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:14px}
+.pager-left,.pager-right{display:flex;align-items:center;gap:9px}
+.pager-count{font-size:12.5px;color:var(--muted)}
+.pager-page{font-size:12.5px;color:var(--ink);min-width:96px;text-align:center}
+.pager .row-edit:disabled{opacity:.45;cursor:default;border-color:var(--line);color:var(--muted)}
+
 /* ---- price changes ---- */
 .price-filters{display:flex;align-items:center;gap:14px}
 .delta{font-weight:600;font-size:13px;white-space:nowrap}

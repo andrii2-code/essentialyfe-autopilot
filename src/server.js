@@ -229,6 +229,12 @@ app.get('/api/ready', auth.requireAuth, wrap(async (req, res) => res.json(await 
 // The editable field definitions, so the UI builds the form from the same source the
 // database and validation use. `canEditSensitive` tells the client whether to render
 // the Contacts / Private sections at all.
+// Everything he can put in the property table as a column — feed data and his own
+// fields together. The table builds its column picker from this.
+app.get('/api/columns', auth.requireAuth, wrap(async (req, res) => {
+  res.json({ columns: fields.columnCatalogue({ canViewSensitive: canViewSensitive(req.user) }) });
+}));
+
 app.get('/api/fields', auth.requireAuth, wrap(async (req, res) => {
   const canSee = canViewSensitive(req.user);
   res.json({

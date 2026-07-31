@@ -256,6 +256,22 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .dt-decide .act.chosen{opacity:.55}
 .dt-decide .act:disabled{opacity:.5;cursor:default}
 
+/* ---- column picker ---- */
+.col-picker{border:1px solid var(--line);border-radius:12px;background:var(--panel);
+  box-shadow:var(--shadow);padding:14px 16px;margin-bottom:14px}
+.col-picker-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.col-picker-head > div{display:flex;gap:8px}
+.col-picker-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px 22px;
+  max-height:340px;overflow-y:auto}
+.col-group-t{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:7px}
+.col-opt{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink);
+  padding:3px 0;cursor:pointer}
+.col-opt input{width:14px;height:14px;accent-color:var(--gold-d);cursor:pointer}
+.col-tag{font-style:normal;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--gold-d);background:rgba(200,164,77,.14);padding:1px 5px;border-radius:4px}
+
 /* ---- table filters + sortable headers ---- */
 .tbl-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .tbl th.sortable{cursor:pointer;user-select:none;white-space:nowrap}

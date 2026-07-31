@@ -25,6 +25,9 @@
 
 const FIELDS = [
   // --- Positioning -------------------------------------------------------------
+  // What he calls the property. This is the name shown in the table (linking to its
+  // Drive folder) and it is what the Drive folder is named, so he controls both.
+  { key: 'property_name',     label: 'Property Name',      type: 'text',   group: 'Positioning' },
   { key: 'tier',              label: 'Tier',              type: 'select', group: 'Positioning',
     options: ['', 'A', 'B', 'C', 'D'] },
   { key: 'wedding_spotlight', label: 'Wedding Spotlight',  type: 'select', group: 'Positioning',
@@ -129,7 +132,53 @@ function redact(listing, canViewSensitive) {
   return out;
 }
 
+// Columns that come from the listing feed / AI rather than from him. These are
+// read-only, but he can still choose to show them in the table — the point of the
+// column picker is that nothing is off-limits.
+const FEED_COLUMNS = [
+  { key: 'street_line',      label: 'Address',           group: 'Listing' },
+  { key: 'area',             label: 'Area',              group: 'Listing' },
+  { key: 'city',             label: 'City',              group: 'Listing' },
+  { key: 'county',           label: 'County',            group: 'Listing' },
+  { key: 'state',            label: 'State',             group: 'Listing' },
+  { key: 'zip',              label: 'Zip',               group: 'Listing' },
+  { key: 'neighborhood',     label: 'Neighborhood',      group: 'Listing' },
+  { key: 'price',            label: 'Price',             group: 'Listing', type: 'money' },
+  { key: 'status',           label: 'Status',            group: 'Listing' },
+  { key: 'spec',             label: 'Property Type',     group: 'Listing' },
+  { key: 'beds',             label: 'Bed',               group: 'Structure', type: 'number' },
+  { key: 'baths',            label: 'Bath',              group: 'Structure', type: 'number' },
+  { key: 'sqft',             label: 'Sq. Ft.',           group: 'Structure', type: 'number' },
+  { key: 'lot_acres',        label: 'Acres / Lot Size',  group: 'Structure', type: 'number' },
+  { key: 'floors',           label: '# of Floors',       group: 'Structure', type: 'number' },
+  { key: 'parking',          label: '# Parking',         group: 'Structure', type: 'number' },
+  { key: 'year_built',       label: 'Year Built',        group: 'Structure', type: 'number' },
+  { key: 'furnished',        label: 'Furnished & Equipped', group: 'Structure' },
+  { key: 'sleep_capacity',   label: 'Sleep Cap.',        group: 'Capacity', type: 'number' },
+  { key: 'stand_capacity',   label: 'Stand Cap.',        group: 'Capacity', type: 'number' },
+  { key: 'seating_capacity', label: 'Seat Cap.',         group: 'Capacity', type: 'number' },
+  { key: 'property_style',   label: 'Style',             group: 'Character' },
+  { key: 'architect',        label: 'Architect / Design Firm', group: 'Character' },
+  { key: 'gated_community',  label: 'Gated Community',   group: 'Character' },
+  { key: 'also_known_as',    label: 'Also Known As',      group: 'Character' },
+  { key: 'amenities',        label: 'Amenities',         group: 'Character' },
+  { key: 'last_updated',     label: 'Updated',           group: 'Listing' },
+  { key: 'created_at',       label: 'Added',             group: 'Listing', type: 'date' },
+];
+
+// Everything he could put in the table: the feed columns plus his own fields. The UI
+// builds the column picker from this, so adding a field in FIELDS above makes it
+// available as a column with no further work.
+function columnCatalogue({ canViewSensitive = true } = {}) {
+  const mine = FIELDS
+    .filter(f => canViewSensitive || !f.sensitive)
+    .map(f => ({ key: f.key, label: f.label, group: f.group, type: f.type, editable: true, sensitive: !!f.sensitive }));
+  const feed = FEED_COLUMNS.map(c => ({ ...c, editable: false, sensitive: false }));
+  return [...feed, ...mine];
+}
+
 module.exports = {
   FIELDS, FIELD_KEYS, SENSITIVE_KEYS, GROUPS, byKey,
+  FEED_COLUMNS, columnCatalogue,
   alterStatements, coerce, redact,
 };

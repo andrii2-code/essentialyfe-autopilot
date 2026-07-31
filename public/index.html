@@ -52,7 +52,7 @@
       <div class="nav-sep">DATABASE</div>
       <a class="nav-item" data-view="database"><span class="ic">▤</span> Property database <b class="badge" id="badge-db">0</b></a>
       <!-- Admin-only; shown once we know the signed-in user's role. -->
-      <a class="nav-item hidden" data-view="team" id="nav-team"><span class="ic">⚿</span> Team &amp; permissions</a>
+      <a class="nav-item hidden" data-view="team" id="nav-team"><span class="ic">⚿</span> Teams &amp; Permissions</a>
     </nav>
     <div class="sidebar-foot">
       <div class="acct" id="acct">
@@ -195,9 +195,22 @@
           <option value="status:asc">Status</option>
         </select>
         <button class="row-edit hidden" id="db-clear">Clear filters</button>
+        <button class="row-edit" id="db-columns">⊞ Columns</button>
       </div>
 
-      <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr><th></th><th class="sortable" data-sort="street_line">Address</th><th class="sortable" data-sort="area">Area</th><th class="sortable" data-sort="price">Price</th><th class="sortable" data-sort="tier">Tier</th><th>Your rate</th><th>Bd/Ba</th><th class="sortable" data-sort="sqft">Sq Ft</th><th>Drive</th><th class="sortable" data-sort="status">Status</th><th></th></tr></thead><tbody id="db-body"></tbody></table></div>
+      <!-- Column picker: any field can be a column, so he is not limited to a fixed set -->
+      <div class="col-picker hidden" id="col-picker">
+        <div class="col-picker-head">
+          <b>Choose the columns you want</b>
+          <div>
+            <button class="row-edit" id="col-reset">Reset to default</button>
+            <button class="row-edit" id="col-done">Done</button>
+          </div>
+        </div>
+        <div class="col-picker-body" id="col-picker-body"></div>
+      </div>
+
+      <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr id="db-head"></tr></thead><tbody id="db-body"></tbody></table></div>
 
       <!-- Pagination. Matters more once his own 7,000-property sheet is imported. -->
       <div class="pager" id="db-pager">
@@ -250,7 +263,7 @@
     <section class="view hidden" id="view-team">
       <div class="view-head">
         <div>
-          <h1 class="serif">Team &amp; permissions</h1>
+          <h1 class="serif">Teams &amp; Permissions</h1>
           <p class="lede">Everyone you invite can see the properties and the sourcing queue. The restricted fields — contacts, owner temper, wifi and access info — stay hidden unless you tick the box for that person.</p>
         </div>
       </div>

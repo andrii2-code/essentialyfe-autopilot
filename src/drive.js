@@ -75,6 +75,11 @@ function streetName(listing) {
 }
 
 function propertyFolderName(listing) {
+  // If he has named the property himself, that is the folder name — his name for it
+  // should be what he sees in Drive.
+  if (listing.property_name && String(listing.property_name).trim()) {
+    return String(listing.property_name).trim();
+  }
   const name = streetName(listing);
   if (!name) return listing.address || listing.title || 'Property';
   const parts = [`The ${name}`];

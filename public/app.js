@@ -263,7 +263,8 @@ let dbRows = [];   // the full set; paging slices this rather than refetching
 
 async function renderDatabase({ refetch = true } = {}) {
   const body = $('#db-body');
-  if (!body.children.length) body.innerHTML = `<tr><td colspan="11" class="muted" style="padding:18px">Loading…</td></tr>`;
+  if (!body.children.length) body.innerHTML = `<tr><td colspan="${visibleColumns().length + 2}" class="muted" style="padding:18px">Loading…</td></tr>`;
+  await loadColumnCatalogue();   // the table is drawn from his chosen columns
   if (refetch) {
     await refreshSummary();
     // Every property he has, not just the approved ones. Showing only 'ready' meant the
@@ -277,8 +278,8 @@ async function renderDatabase({ refetch = true } = {}) {
     // Distinguish "you have none" from "your filters matched none" — otherwise a
     // forgotten filter looks like lost data.
     body.innerHTML = dbRows.length
-      ? `<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">No properties match these filters. <a class="link" id="db-clear-inline">Clear them</a></td></tr>`
-      : `<tr><td colspan="11" class="muted" style="text-align:center;padding:30px">No properties yet. Run the collector to pull today's listings.</td></tr>`;
+      ? `<tr><td colspan="${visibleColumns().length + 2}" class="muted" style="text-align:center;padding:30px">No properties match these filters. <a class="link" id="db-clear-inline">Clear them</a></td></tr>`
+      : `<tr><td colspan="${visibleColumns().length + 2}" class="muted" style="text-align:center;padding:30px">No properties yet. Run the collector to pull today's listings.</td></tr>`;
     $('#db-clear-inline')?.addEventListener('click', clearDbFilters);
     updatePager(0, 0, 0);
     return;
@@ -295,34 +296,142 @@ async function renderDatabase({ refetch = true } = {}) {
   const rows = all.slice(start, start + size);
   updatePager(all.length, start, rows.length, pages);
 
-  body.innerHTML = rows.map(l => {
-    const nImg = (l.images || []).length;
-    // His own fields, surfaced in the table so the manual data is visible at a glance.
-    const tier = l.tier ? `<span class="t">${esc(l.tier)}</span>` : '<span class="muted">—</span>';
-    const rate = l.rate1_monthly ? fmt(l.rate1_monthly) + '/mo'
-      : l.rate1_nightly ? fmt(l.rate1_nightly) + '/night'
-      : l.rate1_event ? fmt(l.rate1_event) + '/event'
-      : l.rate1_film ? fmt(l.rate1_film) + '/film'
-      : '<span class="muted">—</span>';
-    const drive = l.drive_folder_url
-      ? `<a class="drive-link" href="${l.drive_folder_url}" target="_blank">📁 ${nImg} photo${nImg === 1 ? '' : 's'} · Open</a>`
-      : `<span class="drive-link na" title="Folder + tagged files are prepared; uploads on service-account connect">📁 ${nImg ? nImg + ' · ' : ''}Prepared</span>`;
-    return `
+  renderHead();
+  const cols = visibleColumns();
+  body.innerHTML = rows.map(l => `
     <tr data-id="${l.id}">
-      <td><img class="t-thumb" src="${imgFor(l)}" alt=""></td>
-      <td><b>${esc(l.street_line || l.address)}</b></td>
-      <td>${esc(l.area || l.city || '')}</td>
-      <td class="t-price">${fmt(l.price)}</td>
-      <td><div class="t-tags">${tier}</div></td>
-      <td>${rate}</td>
-      <td>${l.beds ?? '—'}/${l.baths ?? '—'}</td>
-      <td>${l.sqft ? l.sqft.toLocaleString() : '—'}</td>
-      <td>${drive}</td>
-      <td><span class="pill ${l.status}">${statusLabel(l.status)}</span></td>
+      <td><img class="t-thumb" src="${imgFor(l)}" loading="lazy" alt=""></td>
+      ${cols.map(c => `<td${cellClass(c)}>${cellHtml(l, c)}</td>`).join('')}
       <td><button class="row-edit" data-edit="${l.id}">Edit fields</button></td>
-    </tr>`;
-  }).join('');
+    </tr>`).join('');
 }
+
+// ---------- columns ----------
+// Nothing is hardcoded: the table renders whatever columns he has chosen, drawn from
+// the full catalogue of feed data and his own fields.
+const DEFAULT_COLUMNS = ['property_name', 'street_line', 'area', 'price', 'tier', 'beds', 'sqft', 'status'];
+let COLUMN_CATALOGUE = [];
+
+function chosenColumns() {
+  try {
+    const v = JSON.parse(localStorage.getItem('esl-db-columns') || 'null');
+    if (Array.isArray(v) && v.length) return v;
+  } catch {}
+  return DEFAULT_COLUMNS;
+}
+function setChosenColumns(keys) {
+  try { localStorage.setItem('esl-db-columns', JSON.stringify(keys)); } catch {}
+}
+// Only columns we actually know about, in his chosen order.
+function visibleColumns() {
+  const known = new Map(COLUMN_CATALOGUE.map(c => [c.key, c]));
+  return chosenColumns().map(k => known.get(k)).filter(Boolean);
+}
+
+function cellClass(c) {
+  if (c.type === 'money' || c.key === 'price') return ' class="t-price"';
+  return '';
+}
+
+// How one value is drawn. The special cases are the ones worth reading at a glance:
+// the property name links to its Drive folder, status is a pill, tier is a chip.
+function cellHtml(l, c) {
+  const v = l[c.key];
+
+  if (c.key === 'property_name') {
+    const name = v || propertyFallbackName(l);
+    return l.drive_folder_url
+      ? `<a class="drive-link" href="${esc(l.drive_folder_url)}" target="_blank" title="Open this property's folder in Google Drive">📁 ${esc(name)}</a>`
+      : `<span title="The Drive folder is created when you approve the property">${esc(name)}</span>`;
+  }
+  if (c.key === 'status') return `<span class="pill ${esc(l.status)}">${esc(statusLabel(l.status))}</span>`;
+  if (c.key === 'tier') return v ? `<div class="t-tags"><span class="t">${esc(v)}</span></div>` : '<span class="muted">—</span>';
+  if (c.key === 'street_line') return `<b>${esc(v || l.address || '—')}</b>`;
+  if (c.key === 'area') return esc(v || l.city || '—');
+
+  if (v == null || v === '') return '<span class="muted">—</span>';
+  if (c.type === 'money') return fmt(v);
+  if (c.type === 'date' || /_at$/.test(c.key)) return esc(new Date(v).toLocaleDateString());
+  if (Array.isArray(v)) return esc(v.slice(0, 3).join(', '));
+  if (c.type === 'number' && typeof v === 'number') return esc(v.toLocaleString());
+  return esc(String(v));
+}
+
+// If he hasn't named a property yet, show what Drive would call it.
+function propertyFallbackName(l) {
+  const street = (l.street_line || '').replace(/^\d+\s+/, '').trim();
+  return street ? `The ${street}` : (l.address || 'Property');
+}
+
+function renderHead() {
+  const head = $('#db-head');
+  if (!head) return;
+  const f = dbFilters.get();
+  const [sortKey, sortDir] = (f.sort || 'price:desc').split(':');
+  head.innerHTML = `<th></th>` + visibleColumns().map(c => {
+    const on = c.key === sortKey;
+    return `<th class="sortable${on ? ' sorted' : ''}" data-sort="${c.key}" data-dir="${on ? sortDir : ''}">${esc(c.label)}</th>`;
+  }).join('') + `<th></th>`;
+  // Headers are rebuilt on every render, so the click handler is bound here.
+  head.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      const cur = (dbFilters.get().sort || 'price:desc').split(':');
+      onFilterChange({ sort: `${key}:${cur[0] === key && cur[1] === 'asc' ? 'desc' : 'asc'}` });
+    });
+  });
+}
+
+async function loadColumnCatalogue() {
+  if (COLUMN_CATALOGUE.length) return COLUMN_CATALOGUE;
+  try {
+    const d = await api('/columns');
+    COLUMN_CATALOGUE = d.columns || [];
+  } catch { COLUMN_CATALOGUE = []; }
+  return COLUMN_CATALOGUE;
+}
+
+// The picker itself: every available column, grouped, with a tick for the ones showing.
+function renderColumnPicker() {
+  const box = $('#col-picker-body');
+  if (!box) return;
+  const chosen = new Set(chosenColumns());
+  const groups = [...new Set(COLUMN_CATALOGUE.map(c => c.group))];
+  box.innerHTML = groups.map(g => `
+    <div class="col-group">
+      <div class="col-group-t">${esc(g)}</div>
+      ${COLUMN_CATALOGUE.filter(c => c.group === g).map(c => `
+        <label class="col-opt">
+          <input type="checkbox" data-col="${c.key}"${chosen.has(c.key) ? ' checked' : ''}>
+          <span>${esc(c.label)}</span>
+          ${c.editable ? '<em class="col-tag">yours</em>' : ''}
+        </label>`).join('')}
+    </div>`).join('');
+
+  box.querySelectorAll('input[data-col]').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const key = chk.dataset.col;
+      // Keep his ordering: appending a newly ticked column puts it on the right.
+      const next = chk.checked
+        ? [...chosenColumns().filter(k => k !== key), key]
+        : chosenColumns().filter(k => k !== key);
+      setChosenColumns(next);
+      renderDatabase({ refetch: false });
+    });
+  });
+}
+
+$('#db-columns')?.addEventListener('click', async () => {
+  await loadColumnCatalogue();
+  renderColumnPicker();
+  $('#col-picker')?.classList.toggle('hidden');
+});
+$('#col-done')?.addEventListener('click', () => $('#col-picker')?.classList.add('hidden'));
+$('#col-reset')?.addEventListener('click', () => {
+  setChosenColumns(DEFAULT_COLUMNS);
+  renderColumnPicker();
+  renderDatabase({ refetch: false });
+});
 
 // ---------- filtering + sorting ----------
 // Filters are remembered per browser, so coming back to the page keeps the view he set
@@ -397,16 +506,7 @@ function applyFiltersAndSort(rows) {
   // Show the "clear" button only when something is actually filtering.
   const active = !!(f.q || f.status || f.area || f.tier);
   $('#db-clear')?.classList.toggle('hidden', !active);
-  markSortedHeader(key, dir);
-  return out;
-}
-
-function markSortedHeader(key, dir) {
-  $$('#db-table th.sortable').forEach(th => {
-    const on = th.dataset.sort === key;
-    th.classList.toggle('sorted', on);
-    th.dataset.dir = on ? dir : '';
-  });
+  return out;   // renderHead() paints the sort arrow on the right header
 }
 
 function clearDbFilters() {
@@ -435,15 +535,8 @@ $('#db-search')?.addEventListener('input', e => {
   searchTimer = setTimeout(() => onFilterChange({ q: v }), 200);
 });
 
-// Clicking a column header sorts by it; clicking the same one again reverses.
-$$('#db-table th.sortable').forEach(th => {
-  th.addEventListener('click', () => {
-    const key = th.dataset.sort;
-    const cur = (dbFilters.get().sort || 'price:desc').split(':');
-    const dir = cur[0] === key && cur[1] === 'asc' ? 'desc' : 'asc';
-    onFilterChange({ sort: `${key}:${dir}` });
-  });
-});
+// Header click-to-sort is bound in renderHead(), because the headers are rebuilt
+// whenever his column choice changes.
 
 // Pager readout + button state. Says "1–50 of 75" rather than just a page number, so
 // he can see how much there is without counting.

@@ -18,10 +18,10 @@
 //   group     which section of the edit form it lands in
 //   sensitive true  => only users with can_view_sensitive may read or write it
 //
-// OPEN QUESTION — his sheet lists Monthly / Nightly / Event / Film TWICE. Rather than
-// guess what the second set means (asking vs achieved? owner cost vs client price?),
-// both sets exist as "Rate set 1" and "Rate set 2" and he will be asked to confirm the
-// labels. Renaming a label here does not touch the stored data.
+// His sheet lists Monthly / Nightly / Event / Film twice. He confirmed (2026-08-01)
+// what the two sets are: the first is HIS COST — what the property costs him — and the
+// second is the ASKING PRICE his team should be upselling the rental at. The margin
+// between them is the business, which is why both are worth holding.
 
 const FIELDS = [
   // --- Positioning -------------------------------------------------------------
@@ -36,17 +36,17 @@ const FIELDS = [
     options: ['', 'Yes', 'No'] },
   { key: 'compensation_type', label: 'Compensation Type',  type: 'text',   group: 'Positioning' },
 
-  // --- Rates · set 1 (labels to be confirmed with him) -------------------------
-  { key: 'rate1_monthly', label: 'Monthly', type: 'money', group: 'Rate set 1' },
-  { key: 'rate1_nightly', label: 'Nightly', type: 'money', group: 'Rate set 1' },
-  { key: 'rate1_event',   label: 'Event',   type: 'money', group: 'Rate set 1' },
-  { key: 'rate1_film',    label: 'Film',    type: 'money', group: 'Rate set 1' },
+  // --- Rates · his cost ---------------------------------------------------------
+  { key: 'rate1_monthly', label: 'Monthly', type: 'money', group: 'Your cost' },
+  { key: 'rate1_nightly', label: 'Nightly', type: 'money', group: 'Your cost' },
+  { key: 'rate1_event',   label: 'Event',   type: 'money', group: 'Your cost' },
+  { key: 'rate1_film',    label: 'Film',    type: 'money', group: 'Your cost' },
 
-  // --- Rates · set 2 -----------------------------------------------------------
-  { key: 'rate2_monthly', label: 'Monthly', type: 'money', group: 'Rate set 2' },
-  { key: 'rate2_nightly', label: 'Nightly', type: 'money', group: 'Rate set 2' },
-  { key: 'rate2_event',   label: 'Event',   type: 'money', group: 'Rate set 2' },
-  { key: 'rate2_film',    label: 'Film',    type: 'money', group: 'Rate set 2' },
+  // --- Rates · what the team asks -----------------------------------------------
+  { key: 'rate2_monthly', label: 'Monthly', type: 'money', group: 'Asking price' },
+  { key: 'rate2_nightly', label: 'Nightly', type: 'money', group: 'Asking price' },
+  { key: 'rate2_event',   label: 'Event',   type: 'money', group: 'Asking price' },
+  { key: 'rate2_film',    label: 'Film',    type: 'money', group: 'Asking price' },
 
   // --- Availability ------------------------------------------------------------
   // Free text on purpose: his sheet holds phrases like "weekends only, not Aug",

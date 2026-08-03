@@ -106,6 +106,19 @@ function show(view) {
   if (view === 'database') return renderDatabase();
   if (view === 'prices') return renderPrices();
   if (view === 'team') return renderTeam();
+  if (view === 'settings') return renderSettings();
+}
+
+// Settings holds the automation controls (which used to be tucked under the dashboard
+// sidebar) and the spreadsheet import. Both are admin-only.
+async function renderSettings() {
+  const isAdmin = state.user?.role === 'admin';
+  $('#view-settings').querySelectorAll('.panel').forEach(p => p.classList.toggle('hidden', !isAdmin));
+  if (!isAdmin) {
+    $('#view-settings').innerHTML = `<div class="panel"><p class="lede">Settings are available to admins.</p></div>`;
+    return;
+  }
+  return renderAutomation().catch(e => console.error('automation:', e.message));
 }
 document.addEventListener('click', e => {
   const nav = e.target.closest('[data-view]');
@@ -134,11 +147,9 @@ async function renderDashboard() {
   // 32 property images, and browsers cap concurrent connections per host, so anything
   // queued behind those images waits seconds before it even leaves.
   // refreshDigest also carries the price-drop count, so this is one request, not two.
+  // Automation moved to Settings, so the dashboard only loads the digest summary here.
   const sidePanels = refreshDigest()
-    .catch(e => console.error('digest summary:', e.message))
-    .then(() => state.user?.role === 'admin'
-      ? renderAutomation().catch(e => console.error('automation:', e.message))
-      : $('#auto-box')?.classList.add('hidden'));
+    .catch(e => console.error('digest summary:', e.message));
 
   await refreshSummary();
   const queue = await api('/queue');
@@ -353,11 +364,21 @@ function cellHtml(l, c) {
       : `<span title="The Drive folder is created when you approve the property">${esc(name)}</span>`;
   }
   if (c.key === 'status') return `<span class="pill ${esc(l.status)}">${esc(statusLabel(l.status))}</span>`;
+  // For sale / Sold / For rent, colour-coded, because telling a rental from a sale at
+  // a glance was the whole complaint.
+  if (c.key === 'spec') return v ? `<span class="pill spec-${esc(v)}">${esc(specLabel(v))}</span>` : '<span class="muted">—</span>';
   if (c.key === 'tier') return v ? `<div class="t-tags"><span class="t">${esc(v)}</span></div>` : '<span class="muted">—</span>';
   if (c.key === 'street_line') return `<b>${esc(v || l.address || '—')}</b>`;
   if (c.key === 'area') return esc(v || l.city || '—');
 
   if (v == null || v === '') return '<span class="muted">—</span>';
+  // His sheet's links live behind cells that just read "Link". Render them as real
+  // links so one click opens the Airbnb page, the photo folder or the website.
+  if (c.type === 'url') {
+    const href = String(v).trim();
+    if (!/^https?:\/\//i.test(href) && !/^mailto:/i.test(href)) return esc(href);
+    return `<a class="ext-link" href="${esc(href)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${esc(href)}">${esc(linkLabel(href))}</a>`;
+  }
   if (c.type === 'money') return fmt(v);
   if (c.type === 'datetime' || /_at$/.test(c.key)) {
     const d = new Date(v);
@@ -367,6 +388,23 @@ function cellHtml(l, c) {
   if (Array.isArray(v)) return esc(v.slice(0, 3).join(', '));
   if (c.type === 'number' && typeof v === 'number') return esc(v.toLocaleString());
   return esc(String(v));
+}
+
+// A link inside the detail card, or an em-dash when there isn't one.
+function detailLink(href) {
+  if (!href || !/^https?:\/\//i.test(String(href))) return '—';
+  return `<a class="ext-link" href="${esc(href)}" target="_blank" rel="noopener">${esc(linkLabel(href))} ↗</a>`;
+}
+
+// Name a link by where it goes. His sheet says "Link" for all of them, which tells
+// him nothing; "airbnb.com" tells him whether it is worth clicking.
+function linkLabel(href) {
+  if (/^mailto:/i.test(href)) return href.replace(/^mailto:/i, '');
+  try {
+    const h = new URL(href).hostname.replace(/^www\./, '');
+    return { 'drive.google.com': 'Google Drive', 'dropbox.com': 'Dropbox',
+             'www.dropbox.com': 'Dropbox' }[h] || h;
+  } catch { return 'Link'; }
 }
 
 // If he hasn't named a property yet, show what Drive would call it.
@@ -644,6 +682,12 @@ function statusLabel(s) {
            ready: 'Ready', live: 'In Drive', passed: 'Passed' }[s] || s;
 }
 
+// Which of his three searches a property came from. The raw values are hyphenated
+// slugs; he should see the words he used when he described the specs.
+function specLabel(s) {
+  return { 'for-sale': 'For sale', 'sold': 'Sold', 'for-rent': 'For rent' }[s] || s || '—';
+}
+
 $('#btn-csv')?.addEventListener('click', async () => {
   // Export exactly what the table is showing him — every page of it, with his filters
   // and sort applied, rather than the raw unfiltered set.
@@ -697,12 +741,31 @@ function openDetail(l) {
   const driveFiles = (l.images || []).map(im => im.name).join('   ');
   const isReady = ['ready', 'live'].includes(l.status);
 
+  // Image on the left, the facts beside it — the shape his own sheet has, so he does
+  // not have to re-orient himself every time he opens a property (his words on the
+  // call). The photo stays a fixed column; everything else flows to the right of it.
   $('#detail-card').innerHTML = `
-    <div class="dt-hero">
-      <img src="${imgFor(l)}" alt="">
-      ${isReady ? '<div class="dt-status">READY · nothing left to do by hand</div>' : ''}
-      <button class="dt-close" id="dt-close">×</button>
-      <div class="dt-addr"><h2>${esc(l.street_line || l.address)}</h2><div class="sub">${esc(l.area || l.city)}, ${esc(l.state)} ${esc(l.zip || '')}</div></div>
+    <div class="dt-top">
+      <div class="dt-hero">
+        <img src="${imgFor(l)}" alt="">
+        ${isReady ? '<div class="dt-status">READY</div>' : ''}
+      </div>
+      <div class="dt-headline">
+        <button class="dt-close" id="dt-close">×</button>
+        <h2>${esc(l.street_line || l.address)}</h2>
+        <div class="sub">${esc(l.area || l.city)}, ${esc(l.state)} ${esc(l.zip || '')}</div>
+        <div class="dt-quick">
+          <span class="pill spec-${esc(l.spec || '')}">${esc(specLabel(l.spec))}</span>
+          <span class="pill ${esc(l.status)}">${esc(statusLabel(l.status))}</span>
+          ${l.tier ? `<span class="t">Tier ${esc(l.tier)}</span>` : ''}
+        </div>
+        <div class="dt-headline-facts">
+          <div><b>${fmt(l.price)}${l.is_rental ? '/mo' : ''}</b><span>Price</span></div>
+          <div><b>${l.beds ?? '—'}</b><span>Beds</span></div>
+          <div><b>${l.baths ?? '—'}</b><span>Baths</span></div>
+          <div><b>${l.sqft ? l.sqft.toLocaleString() : '—'}</b><span>Sq. ft.</span></div>
+        </div>
+      </div>
     </div>
     <div class="dt-body">
       <!-- Review from here too, so he can decide straight from the database rather than
@@ -717,13 +780,12 @@ function openDetail(l) {
 
       <div class="dt-cols">
         <div>
-          <div class="dt-field"><span class="k">Price</span><span class="v">${fmt(l.price)}${l.is_rental ? '/mo' : ''}</span></div>
-          <div class="dt-field"><span class="k">Bedrooms</span><span class="v">${l.beds ?? '—'}</span></div>
-          <div class="dt-field"><span class="k">Bathrooms</span><span class="v">${l.baths ?? '—'}</span></div>
-          <div class="dt-field"><span class="k">Square feet</span><span class="v">${l.sqft ? l.sqft.toLocaleString() : '—'}</span></div>
           <div class="dt-field"><span class="k">Lot size</span><span class="v">${l.lot_acres ? l.lot_acres + ' acres' : '—'}</span></div>
           <div class="dt-field"><span class="k">Floors / Parking</span><span class="v">${l.floors ?? '—'} / ${l.parking ?? '—'}</span></div>
           <div class="dt-field"><span class="k">Year built</span><span class="v">${l.year_built ?? '—'}</span></div>
+          <div class="dt-field"><span class="k">County</span><span class="v">${esc(l.county || '—')}</span></div>
+          <div class="dt-field"><span class="k">Where it came from</span><span class="v">${esc(l.source || '—')}</span></div>
+          <div class="dt-field"><span class="k">Listing page</span><span class="v">${detailLink(l.listing_url || l.source_url)}</span></div>
           <div class="dt-field"><span class="k">Photos</span><span class="v">${(l.images || []).length || l.num_photos || '—'} — cleaned &amp; tagged</span></div>
         </div>
         <div>
@@ -859,6 +921,15 @@ function fieldInput(f, value) {
   if (f.type === 'date') return `<input ${common} type="date" value="${esc(v)}">`;
   if (f.type === 'money' || f.type === 'number') {
     return `<input ${common} type="text" inputmode="numeric" value="${esc(v)}" placeholder="—">`;
+  }
+  // A URL stays editable, but gets an "open" arrow beside it when there is something
+  // to open — so a link from his sheet is one click away rather than copy-paste.
+  if (f.type === 'url') {
+    const openable = /^https?:\/\//i.test(v) || /^mailto:/i.test(v);
+    return `<span class="fld-url">
+      <input ${common} type="text" value="${esc(v)}" placeholder="https://…">
+      ${openable ? `<a class="fld-open" href="${esc(v)}" target="_blank" rel="noopener" title="Open ${esc(v)}">↗</a>` : ''}
+    </span>`;
   }
   return `<input ${common} type="text" value="${esc(v)}" placeholder="—">`;
 }
@@ -1458,6 +1529,133 @@ async function startApp() {
       if (state.summary?.counts?.processing > 0 || active === 'processing') { await refreshSummary(); if (active === 'processing') renderProcessing(); if (active === 'database') renderDatabase(); }
     }, 2500);
   }
+}
+
+// ---------- importing his own spreadsheet ----------
+// Two steps, deliberately: choose a file and see what it WOULD do, then commit. The
+// preview is the whole point — 6,789 rows is not something to accept on faith.
+let importToken = null;
+
+function impMsg(text, cls = '') {
+  const el = $('#imp-msg');
+  if (el) { el.className = 'digest-msg ' + cls; el.textContent = text; }
+}
+
+$('#imp-drop')?.addEventListener('click', () => $('#imp-file')?.click());
+$('#imp-drop')?.addEventListener('dragover', e => { e.preventDefault(); $('#imp-drop').classList.add('over'); });
+$('#imp-drop')?.addEventListener('dragleave', () => $('#imp-drop').classList.remove('over'));
+$('#imp-drop')?.addEventListener('drop', e => {
+  e.preventDefault();
+  $('#imp-drop').classList.remove('over');
+  const f = e.dataTransfer?.files?.[0];
+  if (f) previewImport(f);
+});
+$('#imp-file')?.addEventListener('change', e => {
+  const f = e.target.files?.[0];
+  if (f) previewImport(f);
+});
+
+async function previewImport(file) {
+  const panel = $('#imp-preview');
+  panel?.classList.add('hidden');
+  impMsg(`Reading ${file.name}…`);
+  try {
+    const r = await fetch('/api/import/preview?filename=' + encodeURIComponent(file.name), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Could not read that file');
+    importToken = d.token;
+    renderImportPreview(d);
+    impMsg('');
+  } catch (e) {
+    impMsg(e.message, 'err');
+  }
+}
+
+function renderImportPreview(d) {
+  const s = d.summary;
+  const panel = $('#imp-preview');
+  if (!panel) return;
+
+  const mapRows = d.mapped.map(m =>
+    `<tr><td class="src">${esc(m.source)}</td><td class="arr">→</td><td class="dst">${esc(m.label)}</td>
+     <td class="src">${s.fill[m.key] ? s.fill[m.key].toLocaleString() + ' filled' : '<span class="skip">empty</span>'}</td></tr>`).join('');
+
+  const skipped = d.unmapped.length
+    ? `<div style="margin-top:12px;font-size:12.5px" class="muted">Not brought in: ${d.unmapped.map(esc).join(', ')}</div>` : '';
+
+  const dupes = d.duplicates?.length
+    ? `<div style="margin-top:10px;font-size:12.5px" class="muted">Two columns meant the same thing: ${
+        d.duplicates.map(x => `kept <b>${esc(x.kept)}</b>, ignored <b>${esc(x.source)}</b>`).join('; ')}</div>` : '';
+
+  const warn = s.warnings?.length
+    ? `<details style="margin-top:12px"><summary class="muted" style="font-size:12.5px;cursor:pointer">${s.warnings.length} note${s.warnings.length === 1 ? '' : 's'} about individual cells</summary>
+       <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.7">${s.warnings.map(esc).join('<br>')}</div></details>` : '';
+
+  const hosts = s.photoHosts?.length
+    ? `<div style="margin-top:10px;font-size:12.5px" class="muted">Photo folders: ${
+        s.photoHosts.map(([h, n]) => `${esc(h)} (${n.toLocaleString()})`).join(', ')}</div>` : '';
+
+  // Two rows naming one address. Worth showing rather than quietly merging: some are
+  // genuine repeats, some are two units at the same address that he may want to split.
+  const collided = d.collided?.length
+    ? `<details style="margin-top:12px"><summary class="muted" style="font-size:12.5px;cursor:pointer">
+         ${d.collided.length} address${d.collided.length === 1 ? '' : 'es'} appear more than once in your sheet — the app keeps one row per address
+       </summary>
+       <div class="muted" style="font-size:12px;margin-top:6px;line-height:1.8">${
+         d.collided.slice(0, 60).map(c =>
+           `${esc(c.address)} — kept <b>${esc(c.kept)}</b>, merged <b>${esc(c.dropped)}</b>`).join('<br>')}</div></details>` : '';
+
+  panel.innerHTML = `
+    <div class="imp-stat">
+      <div><b>${s.importable.toLocaleString()}</b><span>Properties</span></div>
+      <div><b>${d.mapped.length}</b><span>Columns understood</span></div>
+      <div><b>${s.links.toLocaleString()}</b><span>Links kept</span></div>
+      ${s.skippedNoAddress ? `<div><b>${s.skippedNoAddress.toLocaleString()}</b><span>Skipped, no address</span></div>` : ''}
+    </div>
+    <div class="imp-map"><table><tbody>${mapRows}</tbody></table></div>
+    ${skipped}${dupes}${hosts}${collided}${warn}
+    <div class="imp-acts">
+      <button class="btn-primary" id="imp-go">Import ${s.importable.toLocaleString()} properties</button>
+      <button class="btn-ghost" id="imp-cancel">Cancel</button>
+      <span class="fld-status" id="imp-progress"></span>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:10px">
+      Properties you already have are matched on address and updated — an empty cell in your
+      sheet never wipes something already in the app. These arrive as your existing inventory,
+      not in the review queue.
+    </div>`;
+  panel.classList.remove('hidden');
+
+  $('#imp-cancel').addEventListener('click', () => {
+    panel.classList.add('hidden');
+    importToken = null;
+    $('#imp-file').value = '';
+  });
+
+  $('#imp-go').addEventListener('click', async () => {
+    const btn = $('#imp-go');
+    btn.disabled = true;
+    $('#imp-progress').textContent = 'Importing… this takes a minute for a file this size.';
+    try {
+      const r = await apiSend('POST', '/import/commit', { token: importToken });
+      $('#imp-progress').className = 'fld-status ok';
+      $('#imp-progress').textContent =
+        `${r.inserted.toLocaleString()} added, ${r.updated.toLocaleString()} updated` +
+        (r.failed ? `, ${r.failed} could not be read` : '');
+      importToken = null;
+      $('#imp-file').value = '';
+      await refreshSummary();
+      if (r.errors?.length) console.warn('import errors:', r.errors);
+    } catch (e) {
+      $('#imp-progress').className = 'fld-status err';
+      $('#imp-progress').textContent = e.message;
+      btn.disabled = false;
+    }
+  });
 }
 
 (async () => {

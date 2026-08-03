@@ -53,6 +53,7 @@
       <a class="nav-item" data-view="database"><span class="ic">▤</span> Property database <b class="badge" id="badge-db">0</b></a>
       <!-- Admin-only; shown once we know the signed-in user's role. -->
       <a class="nav-item hidden" data-view="team" id="nav-team"><span class="ic">⚿</span> Teams &amp; Permissions</a>
+      <a class="nav-item" data-view="settings" id="nav-settings"><span class="ic">⚙</span> Settings</a>
     </nav>
     <div class="sidebar-foot">
       <div class="acct" id="acct">
@@ -115,41 +116,70 @@
             <div class="digest-msg" id="digest-msg"></div>
           </div>
 
-          <!-- Automation: the all-day collector + when the daily email goes out -->
-          <div class="digest-box" id="auto-box">
-            <div class="panel-head" style="margin-top:4px"><h3>Automation</h3></div>
-
-            <div class="auto-row">
-              <label class="team-chk"><input type="checkbox" id="auto-collector"> All-day collector</label>
-              <span class="auto-state" id="auto-collector-state">—</span>
-            </div>
-            <div class="auto-sub" id="auto-collector-sub"></div>
-            <div class="auto-inline">
-              <span class="fld-l">Every</span>
-              <select class="fld-input" id="auto-interval" style="width:auto">
-                <option value="60">hour</option>
-                <option value="120">2 hours</option>
-                <option value="180" selected>3 hours</option>
-                <option value="360">6 hours</option>
-                <option value="720">12 hours</option>
-                <option value="1440">day</option>
-              </select>
-            </div>
-
-            <div class="auto-row" style="margin-top:12px">
-              <label class="team-chk"><input type="checkbox" id="auto-digest"> Send the daily email</label>
-              <span class="auto-state" id="auto-digest-state">—</span>
-            </div>
-            <div class="auto-sub" id="auto-digest-sub"></div>
-            <div class="auto-inline">
-              <span class="fld-l">At</span>
-              <select class="fld-input" id="auto-hour" style="width:auto"></select>
-              <span class="fld-l">Pacific</span>
-            </div>
-
-            <div class="digest-msg" id="auto-msg"></div>
-          </div>
+          <div class="src-note settings-hint">Collector schedule and the daily email now live in <a class="link" data-view="settings">Settings</a>.</div>
         </aside>
+      </div>
+    </section>
+
+    <!-- SETTINGS — these were tucked under the dashboard sidebar, where he said they
+         were invisible. They are their own place now, reachable from the left menu. -->
+    <section class="view hidden" id="view-settings">
+      <div class="panel">
+        <div class="panel-head"><h3>Automation</h3></div>
+        <p class="lede">When the collector runs, and when the daily email goes out.</p>
+
+        <div class="set-block">
+          <div class="auto-row">
+            <label class="team-chk"><input type="checkbox" id="auto-collector"> All-day collector</label>
+            <span class="auto-state" id="auto-collector-state">—</span>
+          </div>
+          <div class="auto-sub" id="auto-collector-sub"></div>
+          <div class="auto-inline">
+            <span class="fld-l">Every</span>
+            <select class="fld-input" id="auto-interval" style="width:auto">
+              <option value="60">hour</option>
+              <option value="120">2 hours</option>
+              <option value="180" selected>3 hours</option>
+              <option value="360">6 hours</option>
+              <option value="720">12 hours</option>
+              <option value="1440">day</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="set-block">
+          <div class="auto-row">
+            <label class="team-chk"><input type="checkbox" id="auto-digest"> Send the daily email</label>
+            <span class="auto-state" id="auto-digest-state">—</span>
+          </div>
+          <div class="auto-sub" id="auto-digest-sub"></div>
+          <div class="auto-inline">
+            <span class="fld-l">At</span>
+            <select class="fld-input" id="auto-hour" style="width:auto"></select>
+            <span class="fld-l">Pacific</span>
+          </div>
+        </div>
+
+        <div class="digest-msg" id="auto-msg"></div>
+      </div>
+
+      <!-- Bringing his own database in. Sits in Settings because it is a one-off
+           set-up job, not something he does every day. -->
+      <div class="panel" style="margin-top:18px">
+        <div class="panel-head"><h3>Import your database</h3></div>
+        <p class="lede">Bring in your own spreadsheet — Excel (.xlsx) or CSV. Properties you already have are updated rather than duplicated, matched on address.</p>
+
+        <div class="imp-drop" id="imp-drop">
+          <input type="file" id="imp-file" accept=".xlsx,.csv" hidden>
+          <div class="imp-drop-in">
+            <div class="imp-ic">▤</div>
+            <div><b>Choose a file</b> or drop it here</div>
+            <div class="muted" style="font-size:12px">.xlsx keeps the links behind your “Link” cells; .csv loses them.</div>
+          </div>
+        </div>
+
+        <div class="imp-panel hidden" id="imp-preview"></div>
+        <div class="digest-msg" id="imp-msg"></div>
       </div>
     </section>
 

@@ -567,4 +567,92 @@ const q = {
   },
 };
 
-module.exports = { pool, init, upsertListing, q };
+// ---- importing his own spreadsheet -----------------------------------------
+//
+// These rows are properties he ALREADY has, so they do not belong in the review
+// queue — they come in as 'imported' and simply populate the database. Matching is on
+// (street_line, city), the same identity the collector uses, which is what makes the
+// duplicate detection he asked about work: once his 6,789 are in, a collected listing
+// at one of those addresses is recognised as his rather than offered up as new.
+//
+// Every column written here is one of his own fields or a plain address/structure
+// fact. COALESCE is one-directional on purpose: an import fills blanks and refreshes
+// values it has, but a blank cell in the sheet never wipes something already in the app.
+async function importListings(rows, { onProgress = () => {} } = {}) {
+  const { FIELDS } = require('./fields');
+  // His editable fields, plus the address/structure columns the sheet also carries.
+  const HIS = FIELDS.map(f => f.key);
+  const BASE = ['address', 'street_line', 'city', 'state', 'zip', 'county', 'neighborhood', 'area',
+                'beds', 'baths', 'sqft', 'lot_acres', 'floors', 'parking',
+                'sleep_capacity', 'stand_capacity', 'seating_capacity',
+                'furnished', 'architect', 'gated_community', 'also_known_as', 'last_updated'];
+  // A field can appear in both lists (his sheet and the feed share some names); keep one.
+  const COLS = [...new Set([...BASE, ...HIS])];
+
+  // camelCase in, snake_case in the table.
+  const pick = (r, col) => {
+    const camel = col.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    const v = r[col] !== undefined ? r[col] : r[camel];
+    return v === undefined || v === '' ? null : v;
+  };
+
+  let inserted = 0, updated = 0, failed = 0;
+  const errors = [];
+  const CHUNK = 200;
+
+  for (let start = 0; start < rows.length; start += CHUNK) {
+    const slice = rows.slice(start, start + CHUNK);
+    // One multi-row INSERT per chunk rather than a statement per property: 6,789
+    // round trips would take minutes over a hosted database.
+    const values = [];
+    const params = [];
+    let n = 0;
+    for (const r of slice) {
+      const placeholders = [];
+      for (const col of COLS) { params.push(pick(r, col)); placeholders.push('$' + (++n)); }
+      params.push('imported'); placeholders.push('$' + (++n));   // status
+      params.push('Imported from your spreadsheet'); placeholders.push('$' + (++n)); // source
+      values.push('(' + placeholders.join(',') + ')');
+    }
+
+    const setClause = COLS
+      .filter(c => c !== 'street_line' && c !== 'city')
+      .map(c => `${c} = COALESCE(EXCLUDED.${c}, listings.${c})`)
+      .join(',\n       ');
+
+    const sql =
+      `INSERT INTO listings (${COLS.join(', ')}, status, source)
+       VALUES ${values.join(',')}
+       ON CONFLICT (street_line, city) DO UPDATE SET
+       ${setClause}
+       RETURNING (xmax = 0) AS inserted`;
+
+    try {
+      const res = await pool.query(sql, params);
+      for (const row of res.rows) row.inserted ? inserted++ : updated++;
+    } catch (e) {
+      // A bad chunk should not lose the whole import: retry its rows one at a time so
+      // only the genuinely broken ones are dropped, and say which they were.
+      for (const r of slice) {
+        try {
+          const p = COLS.map(c => pick(r, c));
+          p.push('imported', 'Imported from your spreadsheet');
+          const ph = p.map((_, i) => '$' + (i + 1)).join(',');
+          const res = await pool.query(
+            `INSERT INTO listings (${COLS.join(', ')}, status, source) VALUES (${ph})
+             ON CONFLICT (street_line, city) DO UPDATE SET ${setClause}
+             RETURNING (xmax = 0) AS inserted`, p);
+          res.rows[0]?.inserted ? inserted++ : updated++;
+        } catch (e2) {
+          failed++;
+          if (errors.length < 20) errors.push(`${r.address || r.streetLine || '(no address)'}: ${e2.message}`);
+        }
+      }
+    }
+    onProgress({ done: Math.min(start + CHUNK, rows.length), total: rows.length, inserted, updated, failed });
+  }
+
+  return { inserted, updated, failed, errors };
+}
+
+module.exports = { pool, init, upsertListing, importListings, q };

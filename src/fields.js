@@ -28,12 +28,18 @@ const FIELDS = [
   // What he calls the property. This is the name shown in the table (linking to its
   // Drive folder) and it is what the Drive folder is named, so he controls both.
   { key: 'property_name',     label: 'Property Name',      type: 'text',   group: 'Positioning' },
+  // 1-7, not A-D. His own sheet grades on 1-7 (confirmed on the call 2026-08-03 and
+  // borne out by the file itself: 1,656 graded rows, every value between 1 and 7).
   { key: 'tier',              label: 'Tier',              type: 'select', group: 'Positioning',
-    options: ['', 'A', 'B', 'C', 'D'] },
-  { key: 'wedding_spotlight', label: 'Wedding Spotlight',  type: 'select', group: 'Positioning',
+    options: ['', '1', '2', '3', '4', '5', '6', '7'] },
+  // His sheet keeps Wedding and Spotlight as two separate tick columns, so they are
+  // two fields here rather than the single "Wedding Spotlight" I had guessed.
+  { key: 'wedding',           label: 'Wedding',            type: 'select', group: 'Positioning',
     options: ['', 'Yes', 'No', 'Maybe'] },
-  { key: 'adult_rentals',     label: 'Adult Rentals',      type: 'select', group: 'Positioning',
+  { key: 'spotlight',         label: 'Spotlight',          type: 'select', group: 'Positioning',
     options: ['', 'Yes', 'No'] },
+  { key: 'adult_rentals',     label: 'Adult Rentals',      type: 'select', group: 'Positioning',
+    options: ['', 'Yes', 'No', 'Maybe', 'TBD'] },
   { key: 'compensation_type', label: 'Compensation Type',  type: 'text',   group: 'Positioning' },
 
   // --- Rates · his cost ---------------------------------------------------------
@@ -47,6 +53,16 @@ const FIELDS = [
   { key: 'rate2_nightly', label: 'Nightly', type: 'money', group: 'Asking price' },
   { key: 'rate2_event',   label: 'Event',   type: 'money', group: 'Asking price' },
   { key: 'rate2_film',    label: 'Film',    type: 'money', group: 'Asking price' },
+
+  // --- Character ---------------------------------------------------------------
+  // His sheet carries its own Property Type ("Villa", "Mansion", "Compound") and up
+  // to three Styles per property. These are HIS words, not the feed's — the feed's
+  // own listing type (for sale / sold / for rent) is a different column entirely and
+  // is read-only, further down in FEED_COLUMNS.
+  { key: 'his_property_type', label: 'Property Type', type: 'text', group: 'Character' },
+  { key: 'style1',            label: 'Style 1',       type: 'text', group: 'Character' },
+  { key: 'style2',            label: 'Style 2',       type: 'text', group: 'Character' },
+  { key: 'style3',            label: 'Style 3',       type: 'text', group: 'Character' },
 
   // --- Availability ------------------------------------------------------------
   // Free text on purpose: his sheet holds phrases like "weekends only, not Aug",
@@ -68,8 +84,20 @@ const FIELDS = [
   { key: 'visited',                    label: 'Visited',                      type: 'text',     group: 'Space' },
 
   // --- Listings elsewhere ------------------------------------------------------
-  { key: 'airbnb_vrbo',          label: 'AirBnb / Vrbo',         type: 'text', group: 'Listed on' },
-  { key: 'giggster_peerspace',   label: 'Giggster / Peerspace',  type: 'text', group: 'Listed on' },
+  // In his sheet these cells read "Link" and carry the real URL as a hyperlink behind
+  // the text — which is exactly what a plain CSV export throws away. They are `url`
+  // type so the importer keeps the target and the UI renders them clickable.
+  { key: 'airbnb_vrbo',          label: 'AirBnb / Vrbo',         type: 'url', group: 'Listed on' },
+  { key: 'giggster_peerspace',   label: 'Giggster / Peerspace',  type: 'url', group: 'Listed on' },
+  // The listing page the row came from (Zillow on 6,589 of his rows, plus Redfin,
+  // Realtor, Compass, LoopNet). His "Address" cell links to it.
+  { key: 'listing_url',          label: 'Listing Page',          type: 'url', group: 'Listed on' },
+  // The property's existing photo folder. 6,286 of his rows link one — Drive, Dropbox
+  // or a tinyurl — off the property name. Distinct from drive_folder_url, which is
+  // the folder THIS app creates when he approves a property.
+  { key: 'photos_url',           label: 'Existing Photos',       type: 'url', group: 'Listed on' },
+  // His own marketing site for the property, where one exists.
+  { key: 'website_url',          label: 'Website',               type: 'url', group: 'Listed on' },
 
   // --- Contacts (sensitive: real people's details) -----------------------------
   { key: 'contact1',              label: 'Contact 1',    type: 'text', group: 'Contacts', sensitive: true },
@@ -88,7 +116,7 @@ const FIELDS = [
 
 // Postgres type per field type. Money is stored as BIGINT whole dollars to keep it
 // exact and sortable.
-const SQL_TYPE = { text: 'TEXT', textarea: 'TEXT', select: 'TEXT', number: 'INTEGER', money: 'BIGINT' };
+const SQL_TYPE = { text: 'TEXT', textarea: 'TEXT', select: 'TEXT', url: 'TEXT', number: 'INTEGER', money: 'BIGINT' };
 
 const FIELD_KEYS = FIELDS.map(f => f.key);
 const SENSITIVE_KEYS = FIELDS.filter(f => f.sensitive).map(f => f.key);
@@ -149,7 +177,12 @@ const FEED_COLUMNS = [
   { key: 'neighborhood',     label: 'Neighborhood',      group: 'Listing' },
   { key: 'price',            label: 'Price',             group: 'Listing', type: 'money' },
   { key: 'status',           label: 'Status',            group: 'Listing' },
-  { key: 'spec',             label: 'Property Type',     group: 'Listing' },
+  // This is which of his three searches the property came from: for sale, sold, or
+  // for rent. It was labelled "Property Type" here, which was wrong twice over — it
+  // reads like Villa/Mansion (a column he actually has, further up), and it left him
+  // unable to tell a rental from a sale. It is the listing type, so it says so.
+  { key: 'spec',             label: 'Listing Type',      group: 'Listing' },
+  { key: 'source',           label: 'Source',            group: 'Listing' },
   { key: 'beds',             label: 'Bed',               group: 'Structure', type: 'number' },
   { key: 'baths',            label: 'Bath',              group: 'Structure', type: 'number' },
   { key: 'sqft',             label: 'Sq. Ft.',           group: 'Structure', type: 'number' },

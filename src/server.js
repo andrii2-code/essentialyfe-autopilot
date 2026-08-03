@@ -1,6 +1,8 @@
 const express = require('express');
 const path = require('path');
-const { q, init } = require('./db');
+const crypto = require('crypto');
+const { q, init, importListings } = require('./db');
+const importer = require('./import');
 const { runCollector, processApproved } = require('./pipeline');
 const { driveMode, fetchDriveFile } = require('./drive');
 const auth = require('./auth');
@@ -11,6 +13,11 @@ const scheduler = require('./scheduler');
 
 // Admins always see the sensitive columns; members only when he grants it.
 const canViewSensitive = (user) => !!user && (user.role === 'admin' || user.can_view_sensitive === true);
+
+// Parsed-but-not-yet-written imports, keyed by a token handed to the browser. Kept in
+// memory deliberately: an import is a single sitting, and this avoids writing a 6,000
+// row scratch copy to the database just to show him a preview.
+const pendingImports = new Map();
 
 const app = express();
 app.use(express.json());
@@ -531,6 +538,52 @@ app.post('/api/collect', auth.requireAdmin, wrap(async (req, res) => {
   // Goes through the scheduler so a manual pass also stamps lastRunAt — otherwise the
   // automatic one could fire again seconds later and spend API calls twice.
   const r = await scheduler.runCollectorPass({ manual: true });
+  res.json(r);
+}));
+
+// ---- importing his own spreadsheet (admin only) ----
+//
+// Two steps on purpose. /preview parses the file and tells him what WOULD happen —
+// how many properties, which of his columns were understood, how many links came
+// across — and writes nothing. /commit then does the work. Nobody should hand 6,789
+// rows to a database on the strength of a file picker.
+const importRaw = express.raw({ type: ['application/octet-stream', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv'], limit: '80mb' });
+
+app.post('/api/import/preview', auth.requireAdmin, importRaw, wrap(async (req, res) => {
+  const filename = String(req.query.filename || '');
+  if (!req.body || !req.body.length) return res.status(400).json({ error: 'No file received' });
+  let parsed;
+  try {
+    parsed = importer.parseWorkbook(req.body, { filename });
+  } catch (e) {
+    return res.status(400).json({ error: `Could not read that file: ${e.message}` });
+  }
+  // Hold the parsed rows for the commit step so the file is only uploaded once.
+  const token = crypto.randomBytes(9).toString('hex');
+  pendingImports.set(token, { rows: parsed.rows, at: Date.now(), filename });
+  // Only ever keep the few most recent; these are big.
+  for (const [k, v] of pendingImports) {
+    if (Date.now() - v.at > 30 * 60 * 1000 || pendingImports.size > 3) pendingImports.delete(k);
+  }
+  const labelFor = (k) => (fields.byKey[k]?.label) || k;
+  res.json({
+    token,
+    filename,
+    summary: parsed.summary,
+    mapped: parsed.mapped.map(m => ({ ...m, label: labelFor(m.key) })),
+    unmapped: parsed.unmapped,
+    duplicates: parsed.duplicates,
+    sample: parsed.rows.slice(0, 3),
+  });
+}));
+
+app.post('/api/import/commit', auth.requireAdmin, wrap(async (req, res) => {
+  const token = String(req.body?.token || '');
+  const held = pendingImports.get(token);
+  if (!held) return res.status(400).json({ error: 'That upload has expired — choose the file again.' });
+  pendingImports.delete(token);
+  const r = await importListings(held.rows);
+  await q.newRun(held.rows.length, r.inserted, `import: ${r.inserted} added, ${r.updated} updated from ${held.filename || 'spreadsheet'}`);
   res.json(r);
 }));
 

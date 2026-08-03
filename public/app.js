@@ -173,8 +173,14 @@ async function renderDashboard() {
   const bySpec = {};
   for (const l of [...queue]) bySpec[l.area] = (bySpec[l.area] || 0) + 1;
   const total = queue.length;
+  // He asked what the data is actually pulled from. Naming one website was both
+  // vague and wrong: every listing arrives with an MLS number, and the LA feeds that
+  // reach us are CLAW (Combined L.A./Westside MLS, the Beverly Hills one) and CRMLS.
+  // Compass inventory reaches us too, through their syndication deal — their
+  // "Coming Soon" listings show up 1-3 days before they hit the MLS or Zillow.
   $('#src-list').innerHTML = `
-    <div class="src-row"><div><div class="src-name">Realtor.com — LA County</div><div class="src-sub">Live · listing data + full photo galleries</div></div><div class="src-count">+${total} new</div></div>
+    <div class="src-row"><div><div class="src-name">MLS — LA County</div><div class="src-sub">CLAW (L.A./Westside) · CRMLS · live listing data + full photo galleries</div></div><div class="src-count">+${total} new</div></div>
+    <div class="src-row"><div><div class="src-name">Compass</div><div class="src-sub">Coming Soon &amp; Private Exclusive — reaches you before the MLS</div></div><div class="src-count">on</div></div>
     <div class="src-row"><div><div class="src-name">All 3 specs</div><div class="src-sub">For-sale · Sold · Rentals</div></div><div class="src-count">on</div></div>
     <div class="src-row"><div><div class="src-name">Owner / address finder</div><div class="src-sub">Skip-trace API</div></div><div class="src-count off">Phase 2</div></div>`;
 
@@ -741,17 +747,39 @@ function openDetail(l) {
   const driveFiles = (l.images || []).map(im => im.name).join('   ');
   const isReady = ['ready', 'live'].includes(l.status);
 
-  // Image on the left, the facts beside it — the shape his own sheet has, so he does
-  // not have to re-orient himself every time he opens a property (his words on the
-  // call). The photo stays a fixed column; everything else flows to the right of it.
+  // The gallery, laid out like his own site (essentialyfe.com): one big photo with a
+  // strip of smaller ones beside it, and a "View all photos" button when there are
+  // more than the strip can hold. He asked for exactly this on the call — the point
+  // is that a property should look familiar the moment it opens, rather than needing
+  // to be re-read each time.
+  const shots = (l.images || []).length ? (l.images || []).map((_, i) => i) : [0];
+  const THUMBS = 4;                       // beside the main image
+  const strip = shots.slice(1, 1 + THUMBS);
+  const moreCount = Math.max(0, shots.length - (1 + THUMBS));
+  const gallery = `
+    <div class="dt-gal">
+      <button class="dt-gal-main" data-photo="0">
+        <img src="${imgFor(l, shots[0])}" alt="">
+        ${isReady ? '<span class="dt-status">READY</span>' : ''}
+      </button>
+      ${strip.length ? `<div class="dt-gal-side">
+        ${strip.map((i, n) => `
+          <button class="dt-gal-thumb" data-photo="${i}">
+            <img src="${imgFor(l, i)}" alt="">
+            ${(n === strip.length - 1 && moreCount) ? `<span class="dt-gal-more">+${moreCount}</span>` : ''}
+          </button>`).join('')}
+      </div>` : ''}
+      ${shots.length > 1 ? `<button class="dt-gal-all" id="dt-view-all">▦ View all ${shots.length} photos</button>` : ''}
+      <button class="dt-close" id="dt-close" title="Close">×</button>
+    </div>`;
+
   $('#detail-card').innerHTML = `
+    ${gallery}
     <div class="dt-top">
-      <div class="dt-hero">
+      <div class="dt-hero hidden">
         <img src="${imgFor(l)}" alt="">
-        ${isReady ? '<div class="dt-status">READY</div>' : ''}
       </div>
       <div class="dt-headline">
-        <button class="dt-close" id="dt-close">×</button>
         <h2>${esc(l.street_line || l.address)}</h2>
         <div class="sub">${esc(l.area || l.city)}, ${esc(l.state)} ${esc(l.zip || '')}</div>
         <div class="dt-quick">
@@ -785,6 +813,7 @@ function openDetail(l) {
           <div class="dt-field"><span class="k">Year built</span><span class="v">${l.year_built ?? '—'}</span></div>
           <div class="dt-field"><span class="k">County</span><span class="v">${esc(l.county || '—')}</span></div>
           <div class="dt-field"><span class="k">Where it came from</span><span class="v">${esc(l.source || '—')}</span></div>
+          <div class="dt-field"><span class="k">MLS #</span><span class="v">${esc(l.mls_id || '—')}</span></div>
           <div class="dt-field"><span class="k">Listing page</span><span class="v">${detailLink(l.listing_url || l.source_url)}</span></div>
           <div class="dt-field"><span class="k">Photos</span><span class="v">${(l.images || []).length || l.num_photos || '—'} — cleaned &amp; tagged</span></div>
         </div>
@@ -821,8 +850,59 @@ function openDetail(l) {
   $('#detail-overlay').classList.remove('hidden');
   $('#dt-close').onclick = () => $('#detail-overlay').classList.add('hidden');
   $('#detail-overlay').onclick = (ev) => { if (ev.target.id === 'detail-overlay') $('#detail-overlay').classList.add('hidden'); };
+  wireGallery(l, shots);
   wireDecision(l);
   mountEditableFields(l);
+}
+
+// Clicking any photo — or "View all" — opens the full set. Arrow keys and Escape work,
+// because this is the one screen he will page through repeatedly.
+function wireGallery(l, shots) {
+  const open = (start = 0) => {
+    let at = start;
+    const box = document.createElement('div');
+    box.className = 'lightbox';
+    box.innerHTML = `
+      <button class="lb-close" title="Close">×</button>
+      <button class="lb-nav prev" title="Previous">‹</button>
+      <img class="lb-img" src="${imgFor(l, shots[at])}" alt="">
+      <button class="lb-nav next" title="Next">›</button>
+      <div class="lb-count"></div>
+      <div class="lb-strip">${shots.map((i, n) =>
+        `<img data-n="${n}" src="${imgFor(l, i)}" alt="">`).join('')}</div>`;
+    document.body.appendChild(box);
+
+    const img = box.querySelector('.lb-img');
+    const count = box.querySelector('.lb-count');
+    const paint = () => {
+      img.src = imgFor(l, shots[at]);
+      const tag = (l.images || [])[shots[at]]?.tag;
+      count.textContent = `${at + 1} / ${shots.length}${tag ? ' · ' + tag : ''}`;
+      box.querySelectorAll('.lb-strip img').forEach(t =>
+        t.classList.toggle('on', +t.dataset.n === at));
+      box.querySelector('.lb-strip img.on')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    };
+    const step = (d) => { at = (at + d + shots.length) % shots.length; paint(); };
+    const close = () => { box.remove(); document.removeEventListener('keydown', onKey); };
+    function onKey(e) {
+      if (e.key === 'Escape') close();
+      else if (e.key === 'ArrowRight') step(1);
+      else if (e.key === 'ArrowLeft') step(-1);
+    }
+
+    box.querySelector('.lb-close').onclick = close;
+    box.querySelector('.prev').onclick = () => step(-1);
+    box.querySelector('.next').onclick = () => step(1);
+    box.onclick = (e) => { if (e.target === box) close(); };
+    box.querySelectorAll('.lb-strip img').forEach(t =>
+      t.onclick = () => { at = +t.dataset.n; paint(); });
+    document.addEventListener('keydown', onKey);
+    paint();
+  };
+
+  $('#dt-view-all')?.addEventListener('click', () => open(0));
+  document.querySelectorAll('#detail-card [data-photo]').forEach(btn =>
+    btn.addEventListener('click', () => open(shots.indexOf(+btn.dataset.photo))));
 }
 
 // What the decision bar says about where this property currently stands.
@@ -1026,8 +1106,10 @@ function whenText(iso) {
 }
 
 async function renderAutomation() {
-  const box = $('#auto-box');
-  if (!box) return;
+  // Guard on a control that actually exists. This used to look for #auto-box, an
+  // element that went away when Settings was rebuilt — so the function returned
+  // early and the hour dropdown below was never filled in, leaving it blank.
+  if (!$('#auto-hour')) return;
   let s;
   try { s = await api('/automation'); } catch (e) { $('#auto-msg').textContent = e.message; return; }
 

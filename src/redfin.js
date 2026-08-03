@@ -76,9 +76,18 @@ function normalize(h, zoneLabel, spec) {
   const tags = Array.isArray(h.listingTags) ? h.listingTags.filter(Boolean) : [];
   const amenities = [...new Set([...keyFacts, ...tags])].slice(0, 20);
 
+  // Who this listing actually came from. The sashes carry brokerage attribution —
+  // "COMPASS COMING SOON" appears on real listings here because of the Compass
+  // syndication deal, and those reach us days before they hit the MLS or Zillow.
+  // That provenance is what he asked to see, so it goes in `source`, not the site name.
+  const sashNames = (h.sashes || []).map(s => s.sashTypeName).filter(Boolean);
+  const brokerSash = sashNames.find(n => /compass|coldwell|century 21|corcoran|sotheby/i.test(n));
+
   return {
     // identity
-    source: 'Redfin (live)',
+    source: brokerSash
+      ? `${brokerSash.replace(/\s+coming soon$/i, '')} (pre-MLS)`
+      : (h.mlsId?.value ? 'MLS (live)' : 'Redfin (live)'),
     sourceUrl: h.url ? `https://www.redfin.com${h.url}` : null,
     mlsId: h.mlsId?.value || null,
     listingId: h.listingId || null,

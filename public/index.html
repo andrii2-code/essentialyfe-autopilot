@@ -98,33 +98,34 @@
         <button class="btn-primary" id="btn-start-review">Start morning review →</button>
       </div>
 
-      <div class="dash-grid">
-        <div class="panel">
-          <div class="panel-head"><h3>This run's queue</h3><a class="link" data-view="review">Review all →</a></div>
-          <div class="queue-preview" id="queue-preview"></div>
-        </div>
-        <aside class="panel sources">
-          <div class="panel-head"><h3>Sources</h3></div>
-          <div class="src-list" id="src-list"></div>
-          <button class="btn-ghost" id="btn-collect">⟳ Run collector now</button>
-          <div class="src-note">Live listing data and full photo galleries across your three specs. <span class="muted">Owner lookup is the one remaining Phase-2 piece.</span></div>
-
-          <div class="digest-box" id="digest-box">
-            <div class="panel-head" style="margin-top:4px"><h3>Daily email</h3></div>
-            <div class="digest-sum" id="digest-sum">—</div>
-            <button class="btn-ghost" id="btn-digest-send">✉ Send it to me now</button>
-            <div class="digest-msg" id="digest-msg"></div>
-          </div>
-
-          <div class="src-note settings-hint">Collector schedule and the daily email now live in <a class="link" data-view="settings">Settings</a>.</div>
-        </aside>
+      <!-- The queue is the whole dashboard now. Sources and the daily email moved to
+           Settings, where he asked for them — they are configuration, not a daily read. -->
+      <div class="panel">
+        <div class="panel-head"><h3>This run's queue</h3><a class="link" data-view="review">Review all →</a></div>
+        <div class="queue-preview" id="queue-preview"></div>
       </div>
     </section>
 
     <!-- SETTINGS — these were tucked under the dashboard sidebar, where he said they
          were invisible. They are their own place now, reachable from the left menu. -->
     <section class="view hidden" id="view-settings">
+      <!-- Where the data comes from. He asked "what is it pulling from?" on the call,
+           so this now names the actual MLS and brokerage sources rather than one site. -->
       <div class="panel">
+        <div class="panel-head"><h3>Sources</h3></div>
+        <div class="src-list" id="src-list"></div>
+        <button class="btn-ghost" id="btn-collect">⟳ Run collector now</button>
+        <div class="src-note">Live listing data and full photo galleries across your three specs. <span class="muted">Owner lookup is the one remaining Phase-2 piece.</span></div>
+      </div>
+
+      <div class="panel" style="margin-top:18px">
+        <div class="panel-head"><h3>Daily email</h3></div>
+        <div class="digest-sum" id="digest-sum">—</div>
+        <button class="btn-ghost" id="btn-digest-send">✉ Send it to me now</button>
+        <div class="digest-msg" id="digest-msg"></div>
+      </div>
+
+      <div class="panel" style="margin-top:18px">
         <div class="panel-head"><h3>Automation</h3></div>
         <p class="lede">When the collector runs, and when the daily email goes out.</p>
 
@@ -263,7 +264,7 @@
         </div>
       </div>
 
-      <div class="table-wrap"><table class="tbl" id="db-table"><thead><tr id="db-head"></tr></thead><tbody id="db-body"></tbody></table></div>
+      <div class="table-wrap" id="db-table-wrap"><table class="tbl" id="db-table"><thead><tr id="db-head"></tr></thead><tbody id="db-body"></tbody></table></div>
 
       <!-- Pagination. Matters more once his own 7,000-property sheet is imported. -->
       <div class="pager" id="db-pager">

@@ -88,6 +88,9 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .stat-l em{font-style:normal;color:var(--gold-d);font-size:9.5px;background:rgba(200,164,77,.12);padding:1px 5px;border-radius:4px;margin-left:4px;letter-spacing:.03em}
 
 .view{padding:30px 36px;max-width:1180px;width:100%}
+/* The property database is the one view that wants the whole window: he has 60+
+   columns available and every pixel of width is one less sideways scroll. */
+#view-database{max-width:none}
 .view-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:24px}
 .view-head h1{font-size:32px;margin:0 0 8px}
 .lede{color:var(--muted);font-size:14.5px;line-height:1.55;max-width:640px;margin:0}
@@ -160,6 +163,30 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .table-wrap{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow-x:auto;overflow-y:hidden}
 .tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:760px}
 .tbl th{text-align:left;padding:12px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--line);font-weight:600;background:var(--panel2);white-space:nowrap}
+
+/* ---- the property database, scrolled comfortably -------------------------------
+   He said: scroll down, move sideways, then scroll back up to see which column you
+   are in — "불편하다". Two fixes, both here:
+     · the header row sticks to the top of the window, so it is always readable
+       however far down the list he is;
+     · the thumbnail and the property name freeze to the left, so a row is still
+       identifiable however far right he scrolls.
+   The wrapper scrolls the page rather than an inner box (overflow-y:visible), which
+   is what lets position:sticky work against the window instead of a clipped div. */
+#db-table-wrap{overflow-y:visible;border-radius:14px}
+#db-table-wrap .tbl thead th{position:sticky;top:0;z-index:3}
+/* col 1 = photo, col 2 = property name. Both pinned; the name carries the shadow
+   that shows the rest of the table has slid underneath it. */
+#db-table-wrap .tbl th:nth-child(1),
+#db-table-wrap .tbl td:nth-child(1){position:sticky;left:0;z-index:2;background:var(--panel)}
+#db-table-wrap .tbl th:nth-child(2),
+#db-table-wrap .tbl td:nth-child(2){position:sticky;left:76px;z-index:2;background:var(--panel);
+  box-shadow:6px 0 8px -6px rgba(15,27,45,.18)}
+#db-table-wrap .tbl thead th:nth-child(1),
+#db-table-wrap .tbl thead th:nth-child(2){z-index:4;background:var(--panel2)}
+/* Hover must repaint the frozen cells too, or they stay pale while the row lights up. */
+#db-table-wrap .tbl tbody tr:hover td:nth-child(1),
+#db-table-wrap .tbl tbody tr:hover td:nth-child(2){background:var(--panel2)}
 .tbl td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis}
 .tbl tr:last-child td{border-bottom:0}
 .tbl tr{cursor:pointer}
@@ -195,16 +222,69 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 
 /* Detail overlay */
 .detail-overlay{position:fixed;inset:0;background:rgba(15,27,45,.5);display:flex;justify-content:center;align-items:flex-start;padding:40px 20px;z-index:50;overflow-y:auto}
-.detail-card{background:var(--panel);border-radius:18px;max-width:1040px;width:100%;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.detail-card{background:var(--panel);border-radius:18px;max-width:1140px;width:100%;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3)}
 
 /* Image left, headline facts right. Below 820px it stacks back to vertical, since
    side-by-side stops being readable on a narrow screen. */
+/* ---- the gallery, laid out like essentialyfe.com --------------------------------
+   One large photo with a strip of smaller ones beside it, and a "View all" button.
+   The last thumbnail carries a "+N" badge so the count is visible without opening. */
+.dt-gal{display:grid;grid-template-columns:1fr 232px;gap:8px;padding:8px 8px 0;position:relative;background:var(--panel)}
+.dt-gal-main,.dt-gal-thumb{padding:0;border:0;cursor:pointer;background:#20293a;overflow:hidden;position:relative;display:block}
+.dt-gal-main{height:380px;border-radius:12px}
+.dt-gal-main img,.dt-gal-thumb img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s}
+.dt-gal-main:hover img,.dt-gal-thumb:hover img{transform:scale(1.03)}
+.dt-gal-side{display:grid;grid-template-rows:repeat(2,1fr);grid-template-columns:repeat(2,1fr);gap:8px;height:380px}
+.dt-gal-thumb{border-radius:10px}
+.dt-gal-more{position:absolute;inset:0;background:rgba(15,27,45,.55);color:#fff;display:flex;
+  align-items:center;justify-content:center;font-size:22px;font-weight:600;font-family:Fraunces,serif}
+/* Sits over the big photo, bottom-left, so it never covers a thumbnail. */
+.dt-gal-all{position:absolute;left:24px;bottom:20px;background:var(--panel);color:var(--heading);
+  border:1px solid var(--line);border-radius:9px;padding:8px 14px;font-size:12.5px;font-weight:600;
+  cursor:pointer;box-shadow:0 2px 10px rgba(15,27,45,.18);z-index:2}
+.dt-gal-all:hover{background:var(--panel2)}
+.dt-gal .dt-status{position:absolute;top:14px;left:14px;background:rgba(47,158,109,.92);color:#fff;
+  font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px}
+@media(max-width:760px){
+  .dt-gal{grid-template-columns:1fr}
+  .dt-gal-main{height:240px}
+  .dt-gal-side{grid-template-rows:1fr;height:88px}
+}
+
+/* ---- full-screen photo viewer ---- */
+.lightbox{position:fixed;inset:0;background:rgba(8,13,22,.94);z-index:80;display:flex;
+  align-items:center;justify-content:center}
+.lb-img{max-width:82vw;max-height:74vh;object-fit:contain;border-radius:8px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.lb-close{position:absolute;top:18px;right:22px;width:40px;height:40px;border-radius:50%;border:0;
+  background:rgba(255,255,255,.14);color:#fff;font-size:22px;cursor:pointer}
+.lb-close:hover{background:rgba(255,255,255,.24)}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;
+  border:0;background:rgba(255,255,255,.14);color:#fff;font-size:30px;line-height:1;cursor:pointer}
+.lb-nav:hover{background:rgba(255,255,255,.26)}
+.lb-nav.prev{left:24px}
+.lb-nav.next{right:24px}
+.lb-count{position:absolute;top:24px;left:50%;transform:translateX(-50%);color:#fff;font-size:12.5px;
+  background:rgba(0,0,0,.4);padding:5px 14px;border-radius:20px}
+.lb-strip{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);display:flex;gap:7px;
+  max-width:86vw;overflow-x:auto;padding:6px}
+.lb-strip img{width:74px;height:54px;object-fit:cover;border-radius:6px;cursor:pointer;opacity:.5;
+  border:2px solid transparent;flex:0 0 auto}
+.lb-strip img.on{opacity:1;border-color:var(--gold)}
+
 .dt-top{display:grid;grid-template-columns:380px 1fr;gap:0;background:var(--panel2);border-bottom:1px solid var(--line)}
+/* The hero is superseded by .dt-gal above; kept for the review-queue card. */
+.dt-top:has(.dt-hero.hidden){grid-template-columns:1fr}
+.dt-hero.hidden{display:none}
 .dt-hero{position:relative;min-height:280px;background:#20293a}
 .dt-hero img{width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0}
 .dt-status{position:absolute;top:14px;left:14px;background:rgba(47,158,109,.92);color:#fff;font-size:10px;font-weight:600;padding:4px 10px;border-radius:20px;letter-spacing:.04em}
 .dt-headline{position:relative;padding:26px 28px 22px}
-.dt-headline .dt-close{position:absolute;top:14px;right:14px;width:32px;height:32px;border-radius:50%;background:var(--chip);color:var(--heading);border:0;cursor:pointer;font-size:18px;line-height:1}
+/* The close button lives in the gallery now (the gallery is the top of the card), so
+   it pins to the card's top-right corner over the photo. */
+.dt-close{position:absolute;top:18px;right:18px;width:36px;height:36px;border-radius:50%;
+  background:rgba(255,255,255,.92);color:var(--heading);border:0;cursor:pointer;font-size:19px;line-height:1;
+  z-index:5;box-shadow:0 2px 10px rgba(15,27,45,.25)}
+.dt-close:hover{background:#fff}
 .dt-headline h2{font-family:Fraunces,serif;font-weight:500;font-size:26px;margin:0 34px 2px 0;color:var(--heading);line-height:1.2}
 .dt-headline .sub{font-size:13px;color:var(--muted)}
 .dt-quick{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:14px 0 18px}

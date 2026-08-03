@@ -129,7 +129,12 @@ function normalize(l, spec) {
   const amenities = Array.isArray(l.tags) ? l.tags.slice(0, 24).map(humanizeTag) : [];
 
   return {
-    source: 'Realtor.com (live)',
+    // What he cares about is the ORIGIN of the record, not the website we read it
+    // through. Every listing arrives with an MLS number, so name the MLS when the
+    // feed tells us which one it is and fall back to a plain "MLS (live)" otherwise.
+    source: l.source?.agents?.[0]?.office_name
+      ? `MLS · ${l.source.agents[0].office_name}`
+      : (l.source?.name ? `MLS · ${l.source.name}` : 'MLS (live)'),
     sourceUrl: l.href || (l.permalink ? `https://www.realtor.com/realestateandhomes-detail/${l.permalink}` : null),
     mlsId: l.source?.id || null,
     listingId: l.listing_id || null,

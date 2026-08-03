@@ -701,7 +701,14 @@ $('#btn-csv')?.addEventListener('click', async () => {
   // Feed/AI columns first, then his own fields — restricted ones only if he may see
   // them (the API already omits those values otherwise, so this keeps headers honest).
   const defs = await loadFieldDefs();
-  const cols = ['address', 'city', 'area', 'spec', 'price', 'beds', 'baths', 'sqft', 'lot_acres', 'floors', 'parking', 'year_built', 'property_style', 'furnished', 'gated_community', 'neighborhood', 'description']
+  // `spec` is the listing type (for sale / sold / rent) and `source` names the MLS or
+  // brokerage the row came from — both are things he asked to be able to see, so they
+  // belong in the file he hands round as much as on screen.
+  // For a sold comp, last_updated holds the sale date (that is the only "when" that
+  // matters on a past sale), so it is exported under a name that says so.
+  const cols = ['address', 'city', 'area', 'spec', 'status', 'source', 'mls_id', 'last_updated',
+    'price', 'beds', 'baths', 'sqft', 'lot_acres', 'floors', 'parking', 'year_built',
+    'property_style', 'furnished', 'gated_community', 'neighborhood', 'description']
     .concat(defs.fields.map(f => f.key));
   const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => {
     let v = r[c]; if (Array.isArray(v)) v = v.join(' | '); if (v == null) v = '';

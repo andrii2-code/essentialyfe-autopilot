@@ -1892,6 +1892,23 @@ function renderImportPreview(d) {
       $('#imp-progress').textContent =
         `${r.inserted.toLocaleString()} added, ${r.updated.toLocaleString()} updated` +
         (r.failed ? `, ${r.failed} could not be read` : '') + photoNote;
+
+      // Say WHICH ones failed and why. The reasons were already being collected and
+      // then dropped into the console, so a partial import looked like an unexplained
+      // "7 could not be read" with no way to act on it.
+      const box = $('#imp-errors');
+      if (box) {
+        if (r.errors?.length) {
+          box.classList.remove('hidden');
+          box.innerHTML = `<div class="imp-err-t">${r.failed} could not be read</div>`
+            + r.errors.map(e => `<div class="imp-err-row">${esc(e)}</div>`).join('')
+            + (r.failed > r.errors.length
+                ? `<div class="imp-err-row muted">…and ${r.failed - r.errors.length} more</div>` : '');
+        } else {
+          box.classList.add('hidden');
+          box.innerHTML = '';
+        }
+      }
       importToken = null;
       $('#imp-file').value = '';
       await refreshSummary();

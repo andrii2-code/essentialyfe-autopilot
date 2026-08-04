@@ -267,6 +267,10 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 :root[data-theme="dark"] .btn-ghost.danger{color:#e08b7f;border-color:rgba(224,139,127,.4)}
 /* Photo backfill sits under the import, separated because it is a second step he
    takes after the spreadsheet is in, not part of the upload itself. */
+.imp-errors{margin-top:12px;background:rgba(176,58,46,.06);border:1px solid rgba(176,58,46,.25);
+  border-radius:10px;padding:12px 14px;max-height:220px;overflow-y:auto}
+.imp-errors .imp-err-t{font-size:12.5px;font-weight:600;color:#b03a2e;margin-bottom:6px}
+.imp-errors .imp-err-row{font-size:12px;color:var(--body);line-height:1.6;word-break:break-word}
 .imp-photos{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
 .imp-photos-t{font-size:13px;font-weight:600;color:var(--heading)}
 .warn{color:#b03a2e;font-weight:600}

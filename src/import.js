@@ -340,8 +340,13 @@ function buildRow(cells, mapping) {
     }
 
     if (def && (def.type === 'money' || def.type === 'number')) {
+      // Round: money and counts are whole-number columns, but his sheet computes some
+      // of these with formulas — a monthly rate divided by 30 arrives as
+      // 6666.666666666667, which Postgres rejects outright ("invalid input syntax for
+      // type bigint") and took the whole property down with it. Seven of his 29 test
+      // rows failed this way, every one of them on a nightly rate or an event fee.
       const n = toNumber(raw);
-      if (n != null) out[key] = n;
+      if (n != null) out[key] = Math.round(n);
       else if (cleanScalar(raw) != null) warnings.push(`${m.source}: "${raw}" is not a number`);
       continue;
     }
@@ -369,7 +374,10 @@ function buildRow(cells, mapping) {
         || key === 'parking' || key === 'sleep_capacity' || key === 'stand_capacity'
         || key === 'seating_capacity' || key === 'lot_acres') {
       const n = toNumber(raw);
-      if (n != null) out[key] = n;
+      // baths and lot_acres are REAL in the table — 7.5 baths and 0.35 acres are real
+      // values and must keep their decimal. Everything else here is an INTEGER column,
+      // so a fractional value has to be rounded or Postgres refuses the whole row.
+      if (n != null) out[key] = (key === 'baths' || key === 'lot_acres') ? n : Math.round(n);
       continue;
     }
 

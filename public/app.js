@@ -797,11 +797,17 @@ function openDetail(l) {
   // but they are NOT this house. Say so plainly — he spotted this on 664 Radcliffe,
   // where the card showed a glass villa and the listing is a small white bungalow.
   const standIn = !cleaned && shotCount === 0;
-  const rawBadge = standIn
-    ? `<span class="dt-gal-raw stand-in" title="This listing's own photos are not available from our data source. These are library images, not this property.">⚠ Stand-in images — not this property</span>`
-    : (!cleaned && shotCount)
-      ? `<span class="dt-gal-raw" title="Photos are cleaned, tagged and filed in your Drive when you like a property.">Original listing photo — not cleaned yet</span>`
-      : '';
+  // A property imported from his spreadsheet has no per-image URLs — his sheet links a
+  // Drive or Dropbox FOLDER, not individual photos. So the gallery has nothing to draw
+  // and the honest thing is to point at the folder he already keeps them in.
+  const ownFolder = standIn && l.photos_url ? l.photos_url : null;
+  const rawBadge = ownFolder
+    ? `<span class="dt-gal-raw stand-in" title="Imported from your spreadsheet, which links a photo folder rather than individual images.">⚠ Stand-in images — your photos are in the linked folder</span>`
+    : standIn
+      ? `<span class="dt-gal-raw stand-in" title="This listing's own photos are not available from our data source. These are library images, not this property.">⚠ Stand-in images — not this property</span>`
+      : (!cleaned && shotCount)
+        ? `<span class="dt-gal-raw" title="Photos are cleaned, tagged and filed in your Drive when you like a property.">Original listing photo — not cleaned yet</span>`
+        : '';
   const gallery = `
     <div class="dt-gal">
       <button class="dt-gal-main" data-photo="0">
@@ -816,7 +822,9 @@ function openDetail(l) {
             ${(n === strip.length - 1 && moreCount) ? `<span class="dt-gal-more">+${moreCount}</span>` : ''}
           </button>`).join('')}
       </div>` : ''}
-      ${shots.length > 1 ? `<button class="dt-gal-all" id="dt-view-all">▦ View all ${shots.length} photos</button>` : ''}
+      ${ownFolder
+        ? `<a class="dt-gal-all" href="${esc(ownFolder)}" target="_blank" rel="noopener">📁 Open your photo folder</a>`
+        : (shots.length > 1 ? `<button class="dt-gal-all" id="dt-view-all">▦ View all ${shots.length} photos</button>` : '')}
       <button class="dt-close" id="dt-close" title="Close">×</button>
     </div>`;
 
@@ -862,7 +870,13 @@ function openDetail(l) {
           <div class="dt-field"><span class="k">Where it came from</span><span class="v">${esc(l.source || '—')}</span></div>
           <div class="dt-field"><span class="k">Brokerage</span><span class="v">${esc(l.brokerage || '—')}</span></div>
           <div class="dt-field"><span class="k">MLS #</span><span class="v">${esc(l.mls_id || '—')}</span></div>
-          <div class="dt-field"><span class="k">Listing page</span><span class="v">${detailLink(l.listing_url || l.source_url)}</span></div>
+          <!-- source_url is where WE fetched the record; listing_url is the link from
+               his own spreadsheet, which is usually Zillow. Preferring his link made
+               the table say "Realtor" while this row opened Zillow. Show the source
+               we actually used here, and keep his own link on its own line. -->
+          <div class="dt-field"><span class="k">Listing page</span><span class="v">${detailLink(l.source_url || l.listing_url)}</span></div>
+          ${l.listing_url && l.source_url && l.listing_url !== l.source_url
+            ? `<div class="dt-field"><span class="k">Your saved link</span><span class="v">${detailLink(l.listing_url)}</span></div>` : ''}
           <div class="dt-field"><span class="k">Photos</span><span class="v">${standIn
             ? `<span class="warn">none for this listing</span>`
             : `${photoCount || l.num_photos || '—'}${(l.images || []).length ? ' — cleaned &amp; tagged' : ' — from the listing'}`}</span></div>

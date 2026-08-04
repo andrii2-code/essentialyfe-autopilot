@@ -179,7 +179,10 @@ function fromRealtor(row, zoneLabel, spec) {
   if (!photos.length && row.primary_photo) photos.push({ url: row.primary_photo, tag: null });
 
   return {
-    source: row.source_type === 'mls' ? 'MLS (live)' : (row.source_type || 'Realtor (live)'),
+    // Name the platform, not just "MLS". Every row here is MLS-sourced, so a bare
+    // "MLS (live)" was true but told him nothing — with three platforms running he
+    // could not tell which one found a property, or whether all three were working.
+    source: row.source_type === 'mls' ? 'MLS · Realtor.com' : `Realtor.com (${row.source_type || 'live'})`,
     brokerage: office,
     sourceUrl: row.href || row.rdc_web_url || null,
     mlsId: row.listing_id != null ? String(row.listing_id) : null,
@@ -314,19 +317,28 @@ async function collect({
       const zone = ZONES[zoneLabel];
       if (!zone) continue;
       const order = (PLATFORM_ORDER[spec] || platforms).filter(p => platforms.includes(p));
+      // Give each platform its own share of the quota rather than letting the first
+      // one absorb it. Asked in sequence against a single budget, Realtor filled all
+      // 12 slots and Redfin and Zillow were never called — so a three-platform
+      // collector returned one platform's listings, which defeats the point of
+      // searching three. Any share a platform cannot fill is left for the others by
+      // the outer `kept` check below.
+      const share = Math.max(1, Math.ceil(limitPerSpec / order.length));
       for (const platform of order) {
         if (kept >= limitPerSpec) break;
         let recs = [];
         try { recs = await collectPlatform(platform, zoneLabel, zone, spec, limitPerSpec); }
         catch (e) { console.error(`  [${platform}/${spec}/${zoneLabel}] ${e.message}`); continue; }
+        let fromThis = 0;
         for (const rec of recs) {
+          if (kept >= limitPerSpec || fromThis >= share) break;
           if (!rec.streetLine) continue;
           if (!passesSpec(rec)) continue;
           const key = `${rec.streetLine}|${rec.city}|${rec.price}`.toLowerCase();
           if (seen.has(key)) continue;      // same property from another platform
           seen.add(key);
           out.push(rec);
-          if (++kept >= limitPerSpec) break;
+          kept++; fromThis++;
         }
       }
       if (kept >= limitPerSpec) break;

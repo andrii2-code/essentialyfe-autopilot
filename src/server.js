@@ -589,7 +589,29 @@ app.post('/api/import/commit', auth.requireAdmin, wrap(async (req, res) => {
   pendingImports.delete(token);
   const r = await importListings(held.rows);
   await q.newRun(held.rows.length, r.inserted, `import: ${r.inserted} added, ${r.updated} updated from ${held.filename || 'spreadsheet'}`);
-  res.json(r);
+
+  // Fetch the real photos straight away rather than leaving it as a second button he
+  // has to know about. His sheet links a folder, not the pictures, so an import that
+  // stops here shows library stand-ins — which is what he saw. Bounded, because a
+  // 6,789-row import would otherwise spend a month of credits in one request; the
+  // rest are picked up by the "Fetch photos" control or the nightly pass.
+  let photos = null;
+  if (process.env.REALTYAPI_KEY) {
+    try {
+      const rows = await q.withoutPhotos();
+      const auto = Math.max(0, Math.min(Number(process.env.IMPORT_PHOTO_LIMIT) || 60, rows.length));
+      if (auto) {
+        const b = await enrichPhotos.backfill(rows, { limit: auto });
+        for (const u of b.updates) await q.setPhotos(u.id, u.photos, u.propertyUrl);
+        photos = {
+          checked: b.used, updated: b.updates.length,
+          noneAvailable: b.streetViewOnly + b.notFound,
+          remaining: Math.max(0, rows.length - b.used),
+        };
+      }
+    } catch (e) { console.error('[import] photo backfill:', e.message); }
+  }
+  res.json({ ...r, photos });
 }));
 
 // ---- photos for imported properties (admin only) ----

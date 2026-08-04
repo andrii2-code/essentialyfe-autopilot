@@ -1881,9 +1881,17 @@ function renderImportPreview(d) {
     try {
       const r = await apiSend('POST', '/import/commit', { token: importToken });
       $('#imp-progress').className = 'fld-status ok';
+      // Say what happened to the photos too — an import that silently left them as
+      // stand-ins looked like the feature had simply not worked.
+      const p = r.photos;
+      const photoNote = p
+        ? ` · photos found for ${p.updated} of ${p.checked}`
+          + (p.noneAvailable ? ` (${p.noneAvailable} have none published)` : '')
+          + (p.remaining ? ` · ${p.remaining.toLocaleString()} still to fetch below` : '')
+        : '';
       $('#imp-progress').textContent =
         `${r.inserted.toLocaleString()} added, ${r.updated.toLocaleString()} updated` +
-        (r.failed ? `, ${r.failed} could not be read` : '');
+        (r.failed ? `, ${r.failed} could not be read` : '') + photoNote;
       importToken = null;
       $('#imp-file').value = '';
       await refreshSummary();

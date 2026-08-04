@@ -229,4 +229,4 @@ async function fetchDriveFile(fileId) {
   }
 }
 
-module.exports = { deliverToDrive, driveMode, fetchDriveFile };
+module.exports = { deliverToDrive, driveMode, fetchDriveFile, driveClient };

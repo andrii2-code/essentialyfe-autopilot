@@ -661,9 +661,14 @@ app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
   const limit = Math.max(1, Math.min(500, Number(req.body?.limit) || 25));
   const rows = await q.withoutPhotos();
 
-  // Same order as the import: his own Drive folders, then the listing lookup.
-  const fromDrive = await drivePhotos.backfill(rows, { limit });
-  for (const u of fromDrive.updates) await q.setPhotos(u.id, u.photos, null);
+  // Same order as the import: his own Drive folders, then the listing lookup. Drive
+  // failing must not abort the whole request — the listing lookup below can still
+  // fill these properties, which is the point of having two sources.
+  let fromDrive = { updates: [], withPhotos: 0 };
+  try {
+    fromDrive = await drivePhotos.backfill(rows, { limit });
+    for (const u of fromDrive.updates) await q.setPhotos(u.id, u.photos, null);
+  } catch (e) { console.error('[photos] drive:', e.message); }
 
   let viaApi = { updates: [], used: 0 };
   if (process.env.REALTYAPI_KEY) {

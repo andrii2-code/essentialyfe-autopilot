@@ -32,6 +32,10 @@ async function photosInFolder(url, { max = 80 } = {}) {
   const id = folderIdFrom(url);
   if (!id) return { photos: [], error: 'not a Drive folder link' };
 
+  // Defensive: if drive.js ever stops exporting this, every folder should report
+  // "Drive is not connected" and fall through to the address lookup — not throw
+  // "driveClient is not a function" at him from the middle of an import.
+  if (typeof driveClient !== 'function') return { photos: [], error: 'Drive is not connected' };
   const drive = driveClient();
   if (!drive) return { photos: [], error: 'Drive is not connected' };
 

@@ -847,15 +847,19 @@ function openDetail(l) {
   // Drive or Dropbox FOLDER, not individual photos. So the gallery has nothing to draw
   // and the honest thing is to point at the folder he already keeps them in.
   const ownFolder = standIn && l.photos_url ? l.photos_url : null;
+  // Order matters: a folder we were refused is a MORE specific fact than "there is a
+  // folder", and it is the one he can act on, so it is tested first.
   const rawBadge = fromHisDrive
     ? `<span class="dt-gal-raw own" title="Read from the photo folder your spreadsheet links for this property.">📁 Your own photos</span>`
-    : ownFolder
-      ? `<span class="dt-gal-raw stand-in" title="Imported from your spreadsheet, which links a photo folder rather than individual images.">⚠ No photos yet — yours are in the linked folder</span>`
-      : standIn
-        ? `<span class="dt-gal-raw stand-in" title="Neither your folder nor the listing data has a photograph of this property.">⚠ No photo available for this property</span>`
-        : (!cleaned && shotCount)
-          ? `<span class="dt-gal-raw" title="Photos are cleaned, tagged and filed in your Drive when you like a property.">Original listing photo — not cleaned yet</span>`
-          : '';
+    : l.photos_folder_denied
+      ? `<span class="dt-gal-raw stand-in" title="Your spreadsheet links a photo folder for this property, but this app's Google account cannot open it. Share the folder with it and the photos come straight in.">⚠ Your photo folder is not shared with this app</span>`
+      : ownFolder
+        ? `<span class="dt-gal-raw stand-in" title="Imported from your spreadsheet, which links a photo folder rather than individual images.">⚠ No photos yet — yours are in the linked folder</span>`
+        : standIn
+          ? `<span class="dt-gal-raw stand-in" title="Neither your folder nor the listing data has a photograph of this property.">⚠ No photo available for this property</span>`
+          : (!cleaned && shotCount)
+            ? `<span class="dt-gal-raw" title="Photos are cleaned, tagged and filed in your Drive when you like a property.">Original listing photo — not cleaned yet</span>`
+            : '';
   const gallery = `
     <div class="dt-gal">
       <button class="dt-gal-main" data-photo="0">
@@ -1920,7 +1924,9 @@ function renderImportPreview(d) {
               ? ` (${[p.fromDrive ? `${p.fromDrive} from your Drive` : null,
                       p.fromListing ? `${p.fromListing} from the listing` : null]
                     .filter(Boolean).join(', ')})` : '')
-          + (p.noneAvailable ? ` · ${p.noneAvailable} had none` : '')
+          + (p.folderDenied ? ` · ${p.folderDenied} folder${p.folderDenied === 1 ? '' : 's'} not shared with this app` : '')
+          + (p.noneAvailable > (p.folderDenied || 0)
+              ? ` · ${p.noneAvailable - (p.folderDenied || 0)} had none` : '')
           + (p.remaining ? ` · ${p.remaining.toLocaleString()} still to fetch below` : '')
         : '';
       $('#imp-progress').textContent =

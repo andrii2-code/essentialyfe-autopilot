@@ -628,6 +628,7 @@ app.post('/api/import/commit', auth.requireAdmin, wrap(async (req, res) => {
     if (cap) {
       const fromDrive = await drivePhotos.backfill(rows, { limit: cap });
       for (const u of fromDrive.updates) await q.setPhotos(u.id, u.photos, null);
+      await q.markFolderDenied(fromDrive.denied);
 
       let viaApi = { updates: [], used: 0, streetViewOnly: 0, notFound: 0 };
       if (process.env.REALTYAPI_KEY) {
@@ -644,6 +645,7 @@ app.post('/api/import/commit', auth.requireAdmin, wrap(async (req, res) => {
         updated: done,
         fromDrive: fromDrive.withPhotos,
         fromListing: viaApi.updates.length,
+        folderDenied: fromDrive.denied.length,
         noneAvailable: Math.max(0, Math.min(cap, rows.length) - done),
         remaining: Math.max(0, rows.length - cap),
       };
@@ -668,6 +670,7 @@ app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
   try {
     fromDrive = await drivePhotos.backfill(rows, { limit });
     for (const u of fromDrive.updates) await q.setPhotos(u.id, u.photos, null);
+    await q.markFolderDenied(fromDrive.denied);
   } catch (e) { console.error('[photos] drive:', e.message); }
 
   let viaApi = { updates: [], used: 0 };
@@ -685,6 +688,7 @@ app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
     updated: done,
     fromDrive: fromDrive.withPhotos,
     fromListing: viaApi.updates.length,
+    folderDenied: fromDrive.denied.length,
     noneAvailable: Math.max(0, Math.min(limit, rows.length) - done),
     remaining: Math.max(0, rows.length - limit),
   });

@@ -24,12 +24,31 @@ function folderIdFrom(url) {
   return m ? m[1] : null;
 }
 
+// Some rows link a shortener rather than Drive directly. Following the redirect turns
+// tinyurl.com/The-Hillside-Five into the real folder id, so those properties are not
+// written off as "not a Drive link" when they are one.
+const SHORTENER = /^https?:\/\/(tinyurl\.com|bit\.ly|goo\.gl|t\.co|rebrand\.ly|is\.gd)\//i;
+
+async function resolveFolderId(url) {
+  const direct = folderIdFrom(url);
+  if (direct) return direct;
+  if (!url || !SHORTENER.test(String(url))) return null;
+  try {
+    // HEAD is enough: we want the final URL, not the page. An unauthenticated request
+    // usually ends at Google's sign-in page rather than the folder — but the folder URL
+    // is carried in its `continue` parameter, so decoding the final URL finds the id
+    // either way.
+    const res = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+    return folderIdFrom(res.url) || folderIdFrom(decodeURIComponent(res.url)) || null;
+  } catch { return null; }
+}
+
 const IMAGE_MIME = /^image\/(jpe?g|png|webp|heic|heif)$/i;
 
 // List the images in one folder. Returns { photos, error } — never throws, because a
 // backfill over thousands of properties must not stop at the first unshared folder.
 async function photosInFolder(url, { max = 80 } = {}) {
-  const id = folderIdFrom(url);
+  const id = await resolveFolderId(url);
   if (!id) return { photos: [], error: 'not a Drive folder link' };
 
   // Defensive: if drive.js ever stops exporting this, every folder should report
@@ -66,7 +85,14 @@ async function photosInFolder(url, { max = 80 } = {}) {
     };
   } catch (e) {
     const msg = e?.errors?.[0]?.reason || e?.message || 'unreadable';
-    return { photos: [], error: /notFound|forbidden|permission/i.test(msg) ? 'folder not shared with this account' : msg };
+    // "We cannot open your folder" and "this property has no photograph" are different
+    // facts and he needs to tell them apart: the first he can fix by sharing the
+    // folder, the second he cannot fix at all.
+    const denied = /notFound|forbidden|permission/i.test(msg);
+    return {
+      photos: [], denied,
+      error: denied ? 'folder not shared with this account' : msg,
+    };
   }
 }
 
@@ -74,6 +100,7 @@ async function photosInFolder(url, { max = 80 } = {}) {
 // the two can be used interchangeably by the caller.
 async function backfill(rows, { limit = 50, onProgress = () => {} } = {}) {
   const updates = [];
+  const denied = [];          // folders that exist but this account cannot open
   let used = 0, withPhotos = 0, noFolder = 0, unreadable = 0;
 
   for (const row of rows) {
@@ -84,13 +111,13 @@ async function backfill(rows, { limit = 50, onProgress = () => {} } = {}) {
     const r = await photosInFolder(folder);
     used++;
     if (r.photos.length) { withPhotos++; updates.push({ id: row.id, photos: r.photos }); }
-    else unreadable++;
+    else { unreadable++; if (r.denied) denied.push(row.id); }
     onProgress({
-      used, limit, found: r.photos.length, error: r.error,
+      used, limit, found: r.photos.length, error: r.error, denied: !!r.denied,
       address: row.address || row.street_line || '',
     });
   }
-  return { updates, used, withPhotos, noFolder, unreadable };
+  return { updates, denied, used, withPhotos, noFolder, unreadable };
 }
 
 module.exports = { photosInFolder, folderIdFrom, backfill };

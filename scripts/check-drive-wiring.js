@@ -36,6 +36,14 @@ const ok = (label, cond, detail = '') => {
     ok(`${String(url).slice(0, 46) || '(empty)'}`, got === want, `→ ${got}`);
   }
 
+  console.log('\nA shortened link is followed to the real folder');
+  // One of his 29 rows links tinyurl.com/The-Hillside-Five rather than Drive directly.
+  // Without following the redirect that property is written off as "not a Drive link"
+  // when it is one.
+  const short = await drivePhotos.photosInFolder('https://tinyurl.com/The-Hillside-Five');
+  ok('tinyurl is recognised as a Drive folder, not rejected outright',
+    short.error !== 'not a Drive folder link', short.error || '');
+
   console.log('\nAn unusable folder reports a reason instead of throwing');
   // No credentials here, so this exercises the "Drive is not connected" path — which
   // is exactly what must happen rather than an exception escaping into the import.

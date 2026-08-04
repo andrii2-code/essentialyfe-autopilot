@@ -138,6 +138,13 @@ function init() {
       ALTER TABLE listings ADD COLUMN IF NOT EXISTS price_changed_at TIMESTAMPTZ;
     `);
 
+    // Set when his own photo folder exists but this account cannot open it. Distinct
+    // from having no photos: he can fix a sharing problem, and the card should say
+    // which of the two it is rather than claiming the property has no photograph.
+    await pool.query(`
+      ALTER TABLE listings ADD COLUMN IF NOT EXISTS photos_folder_denied BOOLEAN DEFAULT false;
+    `);
+
     // The brokerage that listed the property (Compass, Coldwell Banker, Sotheby's).
     // Separate from `source`, which names the MLS the record arrived through — the two
     // were being written into one label, which read as though Compass were an MLS.
@@ -478,6 +485,12 @@ const q = {
          AND (address IS NOT NULL OR street_line IS NOT NULL)
        ORDER BY (tier IS NULL), id`);
     return rows;
+  },
+
+  async markFolderDenied(ids) {
+    if (!ids?.length) return;
+    await pool.query(
+      `UPDATE listings SET photos_folder_denied = true WHERE id = ANY($1::bigint[])`, [ids]);
   },
 
   async setPhotos(id, photos, propertyUrl = null) {

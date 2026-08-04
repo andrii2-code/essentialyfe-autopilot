@@ -345,9 +345,13 @@ app.delete('/api/custom-fields/:key', auth.requireAdmin, wrap(async (req, res) =
 
 app.get('/api/fields', auth.requireAuth, wrap(async (req, res) => {
   const canSee = canViewSensitive(req.user);
+  // The building's own facts come first: for an imported property there is no feed
+  // behind them, so he is the only one who can correct a blank year built or a wrong
+  // bed count. His commercial fields follow.
   res.json({
-    fields: fields.FIELDS.filter(f => canSee || !f.sensitive),
-    groups: fields.GROUPS.filter(g => canSee || !fields.FIELDS.some(f => f.group === g && f.sensitive)),
+    fields: [...fields.FEED_EDITABLE_FIELDS, ...fields.FIELDS.filter(f => canSee || !f.sensitive)],
+    groups: ['Property facts',
+      ...fields.GROUPS.filter(g => canSee || !fields.FIELDS.some(f => f.group === g && f.sensitive))],
     canViewSensitive: canSee,
   });
 }));

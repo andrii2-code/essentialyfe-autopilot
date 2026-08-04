@@ -939,7 +939,10 @@ function openDetail(l) {
             ? `<div class="dt-field"><span class="k">Your saved link</span><span class="v">${detailLink(l.listing_url)}</span></div>` : ''}
           <div class="dt-field"><span class="k">Photos</span><span class="v">${standIn
             ? `<span class="warn">none for this listing</span>`
-            : `${photoCount || l.num_photos || '—'}${(l.images || []).length ? ' — cleaned &amp; tagged' : ' — from the listing'}`}</span></div>
+            : `${photoCount || l.num_photos || '—'}${
+                fromHisDrive ? ' — from your own folder'
+                : (l.images || []).length ? ' — cleaned &amp; tagged'
+                : ' — from the listing'}`}</span></div>
         </div>
         <div>
           <div class="dt-field"><span class="k">Property style</span><span class="v">${esc(styleStr)}</span></div>

@@ -285,13 +285,18 @@ const q = {
   // value is coerced to its column type, so a hand-typed "$15,000/mo" lands as 15000
   // and an unknown key can never reach the SQL.
   async updateFields(id, patch, { allowSensitive = true } = {}) {
-    const { SENSITIVE_KEYS } = require('./fields');
+    const { SENSITIVE_KEYS, EDITABLE_FEED, coerceFeed } = require('./fields');
     const sets = [], vals = [];
     let i = 1;
     for (const [k, raw] of Object.entries(patch || {})) {
-      if (!FIELD_KEYS.includes(k)) continue;
+      const isHis = FIELD_KEYS.includes(k);
+      // The building's own facts are correctable too. An imported property has no feed
+      // behind it, so if he cannot fix a blank year built or a wrong bed count here,
+      // nothing ever will. Provenance columns are deliberately absent from that list.
+      const isFeed = !!EDITABLE_FEED[k] || k === 'description';
+      if (!isHis && !isFeed) continue;
       if (!allowSensitive && SENSITIVE_KEYS.includes(k)) continue; // silently refuse
-      const v = coerce(k, raw);
+      const v = isHis ? coerce(k, raw) : coerceFeed(k, raw);
       if (v === undefined) continue;
       sets.push(`${k}=$${i++}`);
       vals.push(v);

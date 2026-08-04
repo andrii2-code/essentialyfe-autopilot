@@ -186,7 +186,6 @@ const FEED_COLUMNS = [
   // reads like Villa/Mansion (a column he actually has, further up), and it left him
   // unable to tell a rental from a sale. It is the listing type, so it says so.
   { key: 'spec',             label: 'Listing Type',      group: 'Listing' },
-  { key: 'source',           label: 'Source',            group: 'Listing' },
   { key: 'beds',             label: 'Bed',               group: 'Structure', type: 'number' },
   { key: 'baths',            label: 'Bath',              group: 'Structure', type: 'number' },
   { key: 'sqft',             label: 'Sq. Ft.',           group: 'Structure', type: 'number' },
@@ -207,6 +206,34 @@ const FEED_COLUMNS = [
   { key: 'created_at',       label: 'Added',             group: 'Listing', type: 'datetime' },
 ];
 
+// Feed columns he may correct by hand.
+//
+// These describe the BUILDING, and for a property imported from his spreadsheet there
+// is no feed at all — he is the only source of truth, so leaving them read-only meant
+// a blank year built or a wrong bed count could never be put right. A collected
+// property is refreshed from its source on the next pass, so an edit there is a
+// correction until the feed says otherwise, which is the same bargain as his own fields.
+//
+// Deliberately NOT here: source, brokerage, mls_id, spec, status, created_at,
+// last_updated. Those record WHERE A RECORD CAME FROM, and a hand-typed value would
+// make the app assert something untrue about its own provenance.
+const EDITABLE_FEED = {
+  county: 'text', neighborhood: 'text', area: 'text',
+  beds: 'number', baths: 'number', sqft: 'number', lot_acres: 'number',
+  floors: 'number', parking: 'number', year_built: 'number',
+  furnished: 'text', gated_community: 'text',
+  sleep_capacity: 'number', stand_capacity: 'number', seating_capacity: 'number',
+  architect: 'text', also_known_as: 'text', description: 'textarea',
+  price: 'money',
+};
+
+// The feed columns, as editable field definitions, for the property edit form.
+const FEED_EDITABLE_FIELDS = FEED_COLUMNS
+  .filter(c => EDITABLE_FEED[c.key])
+  .map(c => ({ key: c.key, label: c.label, type: EDITABLE_FEED[c.key], group: 'Property facts' }))
+  // description is not in FEED_COLUMNS but is shown on the card and worth correcting.
+  .concat([{ key: 'description', label: 'Description', type: 'textarea', group: 'Property facts' }]);
+
 // Everything he could put in the table: the feed columns plus his own fields. The UI
 // builds the column picker from this, so adding a field in FIELDS above makes it
 // available as a column with no further work.
@@ -218,8 +245,26 @@ function columnCatalogue({ canViewSensitive = true } = {}) {
   return [...feed, ...mine];
 }
 
+// Coerce a feed field the same way coerce() handles his own: money and counts are
+// whole numbers, an emptied box clears the value.
+function coerceFeed(key, raw) {
+  const type = EDITABLE_FEED[key] || (key === 'description' ? 'textarea' : null);
+  if (!type) return undefined;
+  if (raw === null || raw === undefined || raw === '') return null;
+  if (type === 'money' || type === 'number') {
+    const cleaned = String(raw).replace(/[^0-9.\-]/g, '');
+    if (!/\d/.test(cleaned)) return null;
+    const n = Number(cleaned);
+    if (!Number.isFinite(n)) return null;
+    // baths and lot_acres are REAL columns: 7.5 baths and 0.35 acres are real values.
+    return (key === 'baths' || key === 'lot_acres') ? n : Math.round(n);
+  }
+  return String(raw).trim();
+}
+
 module.exports = {
   FIELDS, FIELD_KEYS, SENSITIVE_KEYS, GROUPS, byKey,
   FEED_COLUMNS, columnCatalogue,
+  EDITABLE_FEED, FEED_EDITABLE_FIELDS, coerceFeed,
   alterStatements, coerce, redact,
 };

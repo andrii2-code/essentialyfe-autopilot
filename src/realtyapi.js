@@ -27,8 +27,11 @@ const KEY = process.env.REALTYAPI_KEY || null;
 
 // His three specs → the platform's own vocabulary.
 const SEARCH_TYPE = { 'for-sale': 'For_Sale', 'sold': 'Sold', 'for-rent': 'For_Rent' };
-// Zillow uses its own status wording on /search/bycoordinates.
-const ZILLOW_STATUS = { 'for-sale': 'For_Sale', 'sold': 'Recently_Sold', 'for-rent': 'For_Rent' };
+// Zillow's own wording on /search/bycoordinates. The spec's enum is exactly
+// For_Sale | For_Rent | Sold — "Recently_Sold" looked reasonable and returned
+// "404: No results" inside an HTTP 200, so Zillow silently contributed nothing to the
+// sold spec until the enum was read rather than guessed.
+const ZILLOW_STATUS = { 'for-sale': 'For_Sale', 'sold': 'Sold', 'for-rent': 'For_Rent' };
 
 // The same LA luxury zones the Redfin collector uses, so switching source does not
 // silently change WHICH properties he sees. Each carries a centre + radius as well,
@@ -82,6 +85,21 @@ const n = (v) => {
 };
 const sqftToAcres = (s) => s ? Math.round((s / 43560) * 100) / 100 : null;
 
+// The same brokerage arrives spelled differently by platform — "COMPASS" from one and
+// "Compass" from another — which would list it twice in the Sources panel and split
+// any count or filter he builds on it. Title-case the shouted ones and leave the rest
+// alone, so "Christie's AKG" and "PMS Property Management" keep their own casing.
+function cleanBrokerage(name) {
+  if (!name) return null;
+  const s = String(name).trim().replace(/\s+/g, ' ');
+  if (!s) return null;
+  // All-caps and more than a couple of letters: almost certainly styling, not an acronym.
+  if (s === s.toUpperCase() && /[A-Z]{3,}/.test(s)) {
+    return s.toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase());
+  }
+  return s;
+}
+
 function areaFromCity(city) {
   if (!city) return null;
   const c = city.toLowerCase();
@@ -128,7 +146,7 @@ function fromRedfin(row, zoneLabel, spec) {
   const price = n(hd.priceInfo?.amount ?? hd.priceInfo?.homePrice?.int64Value);
   const sashes = (hd.sashes || []).map(s => s.sashTypeName).filter(Boolean);
   const brokerSash = sashes.find(s => /compass|coldwell|century 21|corcoran|sotheby/i.test(s));
-  const brokerage = brokerSash ? brokerSash.replace(/\s+coming soon$/i, '') : null;
+  const brokerage = cleanBrokerage(brokerSash ? brokerSash.replace(/\s+coming soon$/i, '') : null);
 
   return {
     source: brokerage ? `${brokerage} (pre-MLS)` : 'MLS · Redfin',
@@ -174,7 +192,7 @@ function fromRealtor(row, zoneLabel, spec) {
   const sqftVal = row.sqft ?? row.sqft_min ?? null;
   // Every Realtor row states its own origin, and the listing brokerage by name. This
   // is the pairing that answers "which MLS, and who listed it".
-  const office = (row.advertisers || []).map(x => x.office).filter(Boolean)[0] || null;
+  const office = cleanBrokerage((row.advertisers || []).map(x => x.office).filter(Boolean)[0]);
   const photos = (row.photos || []).map(u => ({ url: String(u).replace(/^http:/, 'https:'), tag: null }));
   if (!photos.length && row.primary_photo) photos.push({ url: row.primary_photo, tag: null });
 
@@ -224,7 +242,7 @@ function fromZillow(row, zoneLabel, spec) {
 
   return {
     source: 'MLS · Zillow',
-    brokerage: p.propertyDisplayRules?.mls?.brokerName || null,
+    brokerage: cleanBrokerage(p.propertyDisplayRules?.mls?.brokerName),
     sourceUrl: p.hdpView?.hdpUrl ? `https://www.zillow.com${p.hdpView.hdpUrl}` : null,
     mlsId: null,
     listingId: p.zpid != null ? String(p.zpid) : null,
@@ -282,7 +300,12 @@ async function collectPlatform(platform, zoneLabel, zone, spec, limit) {
     const { rows } = await call('zillow', 'search/bycoordinates', {
       latitude: zone.lat, longitude: zone.lng, radius: zone.radius, listingStatus: status,
     });
-    return rows.slice(0, limit).map(r => fromZillow(r, zoneLabel, spec));
+    // Do NOT truncate before filtering. Zillow's coordinate search takes no price or
+    // bed parameters, so it returns the whole radius unsorted — cutting to `limit`
+    // first meant the caller only ever saw the first 12 rows, which in Malibu are
+    // cheap apartments. All 12 failed his filter and Zillow contributed nothing,
+    // while 87 qualifying rentals sat further down the same response.
+    return rows.map(r => fromZillow(r, zoneLabel, spec));
   }
   // Push his floor into the query rather than filtering after the fact. Without it a
   // page comes back full of $700k condos, every one is discarded by passesSpec(), and

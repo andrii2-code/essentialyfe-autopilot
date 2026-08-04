@@ -348,15 +348,39 @@ async function renderDatabase({ refetch = true } = {}) {
 // ---------- columns ----------
 // Nothing is hardcoded: the table renders whatever columns he has chosen, drawn from
 // the full catalogue of feed data and his own fields.
-const DEFAULT_COLUMNS = ['property_name', 'street_line', 'area', 'price', 'tier', 'beds', 'sqft', 'status'];
+// Source and brokerage are in the default set because they are the answer to the
+// question he actually asked — "what is it pulling from?". Leaving them available but
+// hidden meant the app knew Compass listed a property and never showed him.
+const DEFAULT_COLUMNS = ['property_name', 'street_line', 'area', 'price', 'tier', 'beds', 'sqft',
+  'source', 'brokerage', 'status'];
 let COLUMN_CATALOGUE = [];
 
+// Columns added to DEFAULT_COLUMNS after he had already picked his own set. His choice
+// is stored in localStorage, so without this he would never see them — the app would
+// know which brokerage listed a property and quietly keep it to itself. Added once
+// each, and only if he has not since removed them by hand.
+const NEW_DEFAULTS = ['source', 'brokerage'];
+
 function chosenColumns() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('esl-db-columns') || 'null'); } catch {}
+  if (!Array.isArray(saved) || !saved.length) return DEFAULT_COLUMNS;
+
+  let seenNew = [];
+  try { seenNew = JSON.parse(localStorage.getItem('esl-db-columns-seen') || '[]'); } catch {}
+  const toAdd = NEW_DEFAULTS.filter(k => !saved.includes(k) && !seenNew.includes(k));
+  if (!toAdd.length) return saved;
+
+  // Slot them in before status, which reads best at the end of the row.
+  const at = saved.indexOf('status');
+  const merged = at > -1
+    ? [...saved.slice(0, at), ...toAdd, ...saved.slice(at)]
+    : [...saved, ...toAdd];
   try {
-    const v = JSON.parse(localStorage.getItem('esl-db-columns') || 'null');
-    if (Array.isArray(v) && v.length) return v;
+    localStorage.setItem('esl-db-columns', JSON.stringify(merged));
+    localStorage.setItem('esl-db-columns-seen', JSON.stringify([...seenNew, ...toAdd]));
   } catch {}
-  return DEFAULT_COLUMNS;
+  return merged;
 }
 function setChosenColumns(keys) {
   try { localStorage.setItem('esl-db-columns', JSON.stringify(keys)); } catch {}
@@ -388,6 +412,18 @@ function cellHtml(l, c) {
   // a glance was the whole complaint.
   if (c.key === 'spec') return v ? `<span class="pill spec-${esc(v)}">${esc(specLabel(v))}</span>` : '<span class="muted">—</span>';
   if (c.key === 'tier') return v ? `<div class="t-tags"><span class="t">${esc(v)}</span></div>` : '<span class="muted">—</span>';
+  // "MLS · Realtor.com" reads better split: the fact that it came from an MLS, then
+  // which platform found it. He asked for the brokerage to be as legible as the MLS.
+  if (c.key === 'source') {
+    if (!v) return '<span class="muted">—</span>';
+    const m = String(v).match(/^MLS\s*·\s*(.+)$/);
+    return m
+      ? `<span class="src-tag mls">MLS</span> <span class="src-plat">${esc(m[1])}</span>`
+      : `<span class="src-plat">${esc(v)}</span>`;
+  }
+  if (c.key === 'brokerage') {
+    return v ? `<span class="src-tag broker">${esc(v)}</span>` : '<span class="muted">—</span>';
+  }
   if (c.key === 'street_line') return `<b>${esc(v || l.address || '—')}</b>`;
   if (c.key === 'area') return esc(v || l.city || '—');
 

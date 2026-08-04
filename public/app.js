@@ -367,6 +367,31 @@ let COLUMN_CATALOGUE = [];
 // each, and only if he has not since removed them by hand.
 const NEW_DEFAULTS = ['source', 'brokerage'];
 
+// Fields he has switched off. Held on the account rather than in this browser, so the
+// same form appears for his whole team. Nothing is deleted: the column keeps its data
+// and turning a field back on brings its values with it.
+let HIDDEN_FIELDS = new Set();
+const isHidden = (key) => HIDDEN_FIELDS.has(key);
+// Reflected onto window so the browser checks can drive it directly.
+Object.defineProperty(window, 'HIDDEN_FIELDS', {
+  get: () => HIDDEN_FIELDS,
+  set: (v) => { HIDDEN_FIELDS = v instanceof Set ? v : new Set(v || []); },
+});
+
+// One row of the property card, omitted entirely when its field is switched off.
+function dtRow(key, label, value) {
+  if (isHidden(key)) return '';
+  return `<div class="dt-field"><span class="k">${esc(label)}</span><span class="v">${value}</span></div>`;
+}
+
+async function loadHiddenFields() {
+  try {
+    const d = await api('/hidden-fields');
+    HIDDEN_FIELDS = new Set(d.hidden || []);
+  } catch { HIDDEN_FIELDS = new Set(); }
+  return HIDDEN_FIELDS;
+}
+
 function chosenColumns() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem('esl-db-columns') || 'null'); } catch {}
@@ -499,6 +524,10 @@ async function loadColumnCatalogue() {
   try {
     const d = await api('/columns');
     COLUMN_CATALOGUE = d.columns || [];
+    // Remember every label we have seen. A hidden field drops out of the catalogue,
+    // so without this the "switched off" list could only show its raw key.
+    for (const c of COLUMN_CATALOGUE) FIELD_LABELS[c.key] = c.label;
+    if (Array.isArray(d.hidden)) HIDDEN_FIELDS = new Set(d.hidden);
   } catch { COLUMN_CATALOGUE = []; }
   return COLUMN_CATALOGUE;
 }
@@ -516,8 +545,12 @@ function renderColumnPicker() {
         <label class="col-opt">
           <input type="checkbox" data-col="${c.key}"${chosen.has(c.key) ? ' checked' : ''}>
           <span>${esc(c.label)}</span>
-          ${c.custom ? `<button class="col-del" data-del="${esc(c.key)}" data-label="${esc(c.label)}" title="Delete this field">×</button>`
-            : c.editable ? '<em class="col-tag">yours</em>' : ''}
+          ${c.custom
+            ? `<button class="col-del" data-del="${esc(c.key)}" data-label="${esc(c.label)}" title="Delete this field">×</button>`
+            : NEVER_HIDE.has(c.key)
+              ? (c.editable ? '<em class="col-tag">yours</em>' : '')
+              : `<button class="col-hide" data-hide="${esc(c.key)}" data-label="${esc(c.label)}"
+                   title="Switch this field off everywhere. Nothing is deleted, and turning it back on brings its values with it.">×</button>`}
         </label>`).join('')}
     </div>`).join('');
 
@@ -527,6 +560,15 @@ function renderColumnPicker() {
       deleteCustomField(btn.dataset.del, btn.dataset.label);
     });
   });
+
+  box.querySelectorAll('[data-hide]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      hideField(btn.dataset.hide, btn.dataset.label);
+    });
+  });
+
+  renderHiddenFields();
 
   box.querySelectorAll('input[data-col]').forEach(chk => {
     chk.addEventListener('change', () => {
@@ -584,6 +626,59 @@ async function deleteCustomField(key, label) {
     await renderDatabase({ refetch: false });
   } catch (e) { alert(e.message); }
 }
+
+// The few fields that cannot be switched off. A property with no address, or one that
+// will not say where it came from, is not something he can act on. Mirrors the server,
+// which refuses them regardless of what the browser sends.
+const NEVER_HIDE = new Set(['street_line', 'address', 'city', 'price', 'status', 'spec',
+  'source', 'brokerage', 'mls_id', 'property_name']);
+
+// Switch a built-in field off. Deliberately not a delete: the column keeps its data,
+// so this is reversible and an import never loses a column he happens to have hidden.
+async function hideField(key, label) {
+  if (!confirm(`Hide "${label}" from the table and the property card?\n\nNothing is deleted. You can switch it back on from the list below.`)) return;
+  try {
+    const next = [...HIDDEN_FIELDS, key];
+    const r = await apiSend('PUT', '/hidden-fields', { hidden: next });
+    HIDDEN_FIELDS = new Set(r.hidden || []);
+    setChosenColumns(chosenColumns().filter(k => k !== key));
+    COLUMN_CATALOGUE = [];
+    await loadColumnCatalogue();
+    FIELD_DEFS = null;
+    renderColumnPicker();
+    await renderDatabase({ refetch: false });
+  } catch (e) { alert(e.message); }
+}
+
+async function unhideField(key) {
+  try {
+    const r = await apiSend('PUT', '/hidden-fields', { hidden: [...HIDDEN_FIELDS].filter(k => k !== key) });
+    HIDDEN_FIELDS = new Set(r.hidden || []);
+    COLUMN_CATALOGUE = [];
+    await loadColumnCatalogue();
+    FIELD_DEFS = null;
+    renderColumnPicker();
+    await renderDatabase({ refetch: false });
+  } catch (e) { alert(e.message); }
+}
+
+// Hidden fields are listed under the picker so switching one off is visibly undoable
+// rather than something he has to remember he did.
+function renderHiddenFields() {
+  const box = $('#col-hidden');
+  if (!box) return;
+  if (!HIDDEN_FIELDS.size) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  const label = (k) => (FIELD_LABELS[k] || k.replace(/_/g, ' '));
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="col-group-t">Switched off</div>`
+    + [...HIDDEN_FIELDS].map(k =>
+        `<button class="col-unhide" data-unhide="${esc(k)}">${esc(label(k))} <span>+ turn back on</span></button>`).join('');
+  box.querySelectorAll('[data-unhide]').forEach(b =>
+    b.addEventListener('click', () => unhideField(b.dataset.unhide)));
+}
+
+// Labels for fields that are hidden, and so no longer in the catalogue to look up.
+let FIELD_LABELS = {};
 
 $('#db-columns')?.addEventListener('click', async () => {
   await loadColumnCatalogue();
@@ -923,10 +1018,10 @@ function openDetail(l) {
 
       <div class="dt-cols">
         <div>
-          <div class="dt-field"><span class="k">Lot size</span><span class="v">${l.lot_acres ? l.lot_acres + ' acres' : '—'}</span></div>
-          <div class="dt-field"><span class="k">Floors / Parking</span><span class="v">${l.floors ?? '—'} / ${l.parking ?? '—'}</span></div>
-          <div class="dt-field"><span class="k">Year built</span><span class="v">${l.year_built ?? '—'}</span></div>
-          <div class="dt-field"><span class="k">County</span><span class="v">${esc(l.county || '—')}</span></div>
+          ${dtRow('lot_acres', 'Lot size', l.lot_acres ? l.lot_acres + ' acres' : '—')}
+          ${dtRow('floors', 'Floors / Parking', `${l.floors ?? '—'} / ${l.parking ?? '—'}`)}
+          ${dtRow('year_built', 'Year built', l.year_built ?? '—')}
+          ${dtRow('county', 'County', esc(l.county || '—'))}
           <div class="dt-field"><span class="k">Where it came from</span><span class="v">${esc(l.source || '—')}</span></div>
           <div class="dt-field"><span class="k">Brokerage</span><span class="v">${esc(l.brokerage || '—')}</span></div>
           <div class="dt-field"><span class="k">MLS #</span><span class="v">${esc(l.mls_id || '—')}</span></div>
@@ -945,19 +1040,21 @@ function openDetail(l) {
                 : ' — from the listing'}`}</span></div>
         </div>
         <div>
-          <div class="dt-field"><span class="k">Property style</span><span class="v">${esc(styleStr)}</span></div>
-          <div class="dt-field"><span class="k">Furnished</span><span class="v">${esc(l.furnished || '—')}</span></div>
-          <div class="dt-field"><span class="k">Also known as</span><span class="v">${esc(l.also_known_as || '—')}</span></div>
-          <div class="dt-field"><span class="k">Neighborhood</span><span class="v">${esc(l.neighborhood || l.city || '—')}</span></div>
-          <div class="dt-field"><span class="k">Gated community</span><span class="v">${esc(l.gated_community || '—')}</span></div>
-          <div class="dt-field"><span class="k">Sleep / Seat / Stand</span><span class="v">${l.sleep_capacity ?? '—'} / ${l.seating_capacity ?? '—'} / ${l.stand_capacity ?? '—'}</span></div>
-          <div class="dt-field"><span class="k">Architect</span><span class="v">${esc(l.architect || '—')}</span></div>
-          <div class="dt-field"><span class="k">Color palette</span><span class="v"><span class="palette">${palette || '—'}</span></span></div>
+          ${dtRow('property_style', 'Property style', esc(styleStr))}
+          ${dtRow('furnished', 'Furnished', esc(l.furnished || '—'))}
+          ${dtRow('also_known_as', 'Also known as', esc(l.also_known_as || '—'))}
+          ${dtRow('neighborhood', 'Neighborhood', esc(l.neighborhood || l.city || '—'))}
+          ${dtRow('gated_community', 'Gated community', esc(l.gated_community || '—'))}
+          ${dtRow('sleep_capacity', 'Sleep / Seat / Stand',
+              `${l.sleep_capacity ?? '—'} / ${l.seating_capacity ?? '—'} / ${l.stand_capacity ?? '—'}`)}
+          ${dtRow('architect', 'Architect', esc(l.architect || '—'))}
+          ${dtRow('amenities', 'Color palette', `<span class="palette">${palette || '—'}</span>`)}
         </div>
       </div>
 
+      ${isHidden('description') ? '' : `
       <div class="dt-section-t">Description</div>
-      <p class="dt-desc">${esc(l.description || '—')}</p>
+      <p class="dt-desc">${esc(l.description || '—')}</p>`}
 
       <div class="drive-row">
         <span class="dr-ic">📁</span>
@@ -1791,6 +1888,7 @@ async function startApp() {
   // is the answer, but only the owner/admins should see the door.
   $('#nav-team')?.classList.toggle('hidden', me.user.role !== 'admin');
   FIELD_DEFS = null; // re-fetch per session: what he may edit depends on his access
+  await loadHiddenFields();   // the property card omits whatever he has switched off
   mountAccount(me.user);
   revealApp();
   await renderDashboard();

@@ -286,7 +286,12 @@ app.get('/api/columns', auth.requireAuth, wrap(async (req, res) => {
     .filter(f => canSee || !f.sensitive)
     .map(f => ({ key: f.key, label: f.label, group: 'Your own fields', type: f.type,
                  editable: true, custom: true, sensitive: !!f.sensitive }));
-  res.json({ columns: [...fields.columnCatalogue({ canViewSensitive: canSee }), ...custom] });
+  // A hidden field leaves the column picker as well, so "switched off" means one thing
+  // everywhere rather than gone from the form but still offered as a column.
+  const hidden = new Set(await q.getSetting('fields.hidden', []));
+  const columns = [...fields.columnCatalogue({ canViewSensitive: canSee }), ...custom]
+    .filter(c => !hidden.has(c.key));
+  res.json({ columns, hidden: [...hidden] });
 }));
 
 // ---- fields he creates himself ----
@@ -297,6 +302,27 @@ function customKeyFrom(label) {
     .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
   return slug ? `cf_${slug}` : null;
 }
+
+// Fields he has switched off. Hiding is deliberately NOT a deletion: the column keeps
+// its data, so turning one back on brings the values with it and an import never
+// silently drops a column he happens to have hidden. It is stored on the account
+// rather than in the browser, so his team sees the same form he does.
+//
+// Provenance and identity are not hideable — a property with no address, or one that
+// will not say where it came from, is not something he can act on.
+const NEVER_HIDE = new Set(['street_line', 'address', 'city', 'price', 'status', 'spec',
+  'source', 'brokerage', 'mls_id', 'property_name']);
+
+app.get('/api/hidden-fields', auth.requireAuth, wrap(async (req, res) => {
+  res.json({ hidden: await q.getSetting('fields.hidden', []) });
+}));
+
+app.put('/api/hidden-fields', auth.requireAdmin, wrap(async (req, res) => {
+  const wanted = Array.isArray(req.body?.hidden) ? req.body.hidden.map(String) : [];
+  const hidden = [...new Set(wanted.filter(k => !NEVER_HIDE.has(k)))];
+  await q.setSetting('fields.hidden', hidden);
+  res.json({ hidden, refused: wanted.filter(k => NEVER_HIDE.has(k)) });
+}));
 
 app.get('/api/custom-fields', auth.requireAuth, wrap(async (req, res) => {
   const canSee = canViewSensitive(req.user);
@@ -312,10 +338,26 @@ app.post('/api/custom-fields', auth.requireAdmin, wrap(async (req, res) => {
   const key = customKeyFrom(label);
   if (!key) return res.status(400).json({ error: 'that name has no letters or numbers in it' });
 
-  // Don't let a new field shadow one that already exists under a different label.
+  // Don't let a new field shadow one that already exists. Custom keys carry a cf_
+  // prefix so they never literally collide with a built-in column, but a field NAMED
+  // "Tier" or "Bed" would still sit in the form twice with no way to tell them apart —
+  // so the check is on the visible name, not just the key.
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const wanted = norm(label);
+
   const existing = await q.listCustomFields();
-  if (existing.some(f => f.key === key)) {
-    return res.status(409).json({ error: `you already have a field called "${label}"` });
+  const clash = existing.find(f => f.key === key || norm(f.label) === wanted);
+  if (clash) {
+    return res.status(409).json({
+      error: `You already have a field called "${clash.label}". Use it, or pick a different name.`,
+    });
+  }
+  const builtIn = [...fields.FIELDS, ...fields.FEED_COLUMNS, ...fields.FEED_EDITABLE_FIELDS]
+    .find(f => norm(f.label) === wanted || f.key === norm(label));
+  if (builtIn) {
+    return res.status(409).json({
+      error: `"${builtIn.label}" is already a field on every property. Turn it on in Columns rather than adding it again.`,
+    });
   }
   let opts;
   if (t === 'select') {
@@ -348,10 +390,16 @@ app.get('/api/fields', auth.requireAuth, wrap(async (req, res) => {
   // The building's own facts come first: for an imported property there is no feed
   // behind them, so he is the only one who can correct a blank year built or a wrong
   // bed count. His commercial fields follow.
+  const hidden = new Set(await q.getSetting('fields.hidden', []));
+  const all = [...fields.FEED_EDITABLE_FIELDS, ...fields.FIELDS.filter(f => canSee || !f.sensitive)]
+    .filter(f => !hidden.has(f.key));
   res.json({
-    fields: [...fields.FEED_EDITABLE_FIELDS, ...fields.FIELDS.filter(f => canSee || !f.sensitive)],
+    fields: all,
+    // A group with nothing left in it should not leave an empty heading behind.
     groups: ['Property facts',
-      ...fields.GROUPS.filter(g => canSee || !fields.FIELDS.some(f => f.group === g && f.sensitive))],
+      ...fields.GROUPS.filter(g => canSee || !fields.FIELDS.some(f => f.group === g && f.sensitive))]
+      .filter(g => all.some(f => f.group === g)),
+    hidden: [...hidden],
     canViewSensitive: canSee,
   });
 }));

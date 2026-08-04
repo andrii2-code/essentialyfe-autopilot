@@ -1,6 +1,7 @@
 // Orchestration: the "all-day collector" + the on-approval processing pipeline.
 const { collect: collectRedfin } = require('./redfin');
 const { collect: collectRealtor } = require('./realtor');
+const { collect: collectRealtyApi } = require('./realtyapi');
 const { enrich } = require('./enrich');
 const { processImage, TARGET } = require('./images');
 const { deliverToDrive } = require('./drive');
@@ -11,6 +12,18 @@ const { upsertListing, q } = require('./db');
 // photo gallery per listing. Falls back to the Redfin gis feed if RAPIDAPI_KEY is
 // absent or the realtor call yields nothing (so the app still runs either way).
 async function collectListings(opts) {
+  // RealtyAPI first: it is the only source that carries real photos on HIS spec.
+  // Measured 2026-08-04 — the free Redfin gis feed below has photos on 3 of 201
+  // listings at 3bd+/$3.9M+ (0 of 132 in Malibu), because Redfin only publishes
+  // photos for listings it brokered and LA luxury is brokered by Compass, Sotheby's
+  // and Coldwell Banker. Through RealtyAPI the same search returns 100% coverage at
+  // ~51 photos per listing, across Realtor, Redfin and Zillow together.
+  if (process.env.REALTYAPI_KEY) {
+    try {
+      const recs = await collectRealtyApi(opts);
+      if (recs.length) return recs;
+    } catch (e) { console.error('[collect] realtyapi:', e.message); }
+  }
   if (process.env.RAPIDAPI_KEY) {
     try {
       const recs = await collectRealtor(opts);

@@ -17,12 +17,21 @@ const IMGS = [
 
 // Parse a listing's real photo gallery: photo_urls is [{url,tag}] or [url] (or a
 // JSON string of either). Returns an array of URL strings.
-function realPhotos(l) {
+// The source gallery as stored at collection time: [{url, tag}]. Each entry may be a
+// bare URL string (older rows) or an object carrying realtor.com's own room label.
+function sourcePhotos(l) {
   if (!l) return [];
-  let g = l.photo_urls;
+  // The API sends both spellings: photo_urls straight off the row (a JSON string) and
+  // photoUrls already parsed. Take whichever is populated rather than assuming one.
+  let g = l.photo_urls ?? l.photoUrls;
   if (typeof g === 'string') { try { g = JSON.parse(g); } catch { g = null; } }
   if (!Array.isArray(g)) return [];
-  return g.map(e => (e && typeof e === 'object') ? e.url : e).filter(Boolean);
+  return g.map(e => (e && typeof e === 'object') ? { url: e.url, tag: e.tag || null } : { url: e, tag: null })
+          .filter(e => e.url);
+}
+
+function realPhotos(l) {
+  return sourcePhotos(l).map(e => e.url);
 }
 
 // First real photo's room tag (realtor.com per-photo label), or null.
@@ -746,9 +755,12 @@ function openDetail(l) {
   // The gallery at the top shows every photo and names the room on each one, and the
   // filenames in Drive carry the same tags — so neither needs repeating in full here.
   // What is worth one line is the coverage: how many photos, and which rooms.
-  const photoCount = (l.images || []).length;
+  // Tags come from the cleaned set once it exists, and from the source gallery before
+  // that — realtor.com labels each photo, so the rooms are known at collection time.
+  const tagged = (l.images || []).length ? (l.images || []) : sourcePhotos(l);
+  const photoCount = tagged.length;
   const roomCounts = {};
-  (l.images || []).forEach(im => { if (im.tag) roomCounts[im.tag] = (roomCounts[im.tag] || 0) + 1; });
+  tagged.forEach(im => { if (im && im.tag) roomCounts[im.tag] = (roomCounts[im.tag] || 0) + 1; });
   const roomsCovered = Object.entries(roomCounts)
     .sort((a, b) => b[1] - a[1])
     .map(([room, n]) => `${esc(room)}${n > 1 ? ` ×${n}` : ''}`)
@@ -761,7 +773,14 @@ function openDetail(l) {
   // more than the strip can hold. He asked for exactly this on the call — the point
   // is that a property should look familiar the moment it opens, rather than needing
   // to be re-read each time.
-  const shots = (l.images || []).length ? (l.images || []).map((_, i) => i) : [0];
+  // How many photos there are to show. `images` only exists once a property has been
+  // approved and run through the cleaning pipeline; before that — and for anything he
+  // passed on — the real gallery still sits in photo_urls from collection time. Using
+  // only `images` meant a listing with 65 real photos showed a single placeholder.
+  // Cap on what imgFor can actually resolve: num_photos is the source's own count and
+  // can exceed the URLs we hold, which would make the gallery repeat images.
+  const shotCount = (l.images || []).length || realPhotos(l).length;
+  const shots = shotCount ? Array.from({ length: shotCount }, (_, i) => i) : [0];
   const THUMBS = 4;                       // beside the main image
   const strip = shots.slice(1, 1 + THUMBS);
   const moreCount = Math.max(0, shots.length - (1 + THUMBS));
@@ -824,7 +843,7 @@ function openDetail(l) {
           <div class="dt-field"><span class="k">Where it came from</span><span class="v">${esc(l.source || '—')}</span></div>
           <div class="dt-field"><span class="k">MLS #</span><span class="v">${esc(l.mls_id || '—')}</span></div>
           <div class="dt-field"><span class="k">Listing page</span><span class="v">${detailLink(l.listing_url || l.source_url)}</span></div>
-          <div class="dt-field"><span class="k">Photos</span><span class="v">${(l.images || []).length || l.num_photos || '—'} — cleaned &amp; tagged</span></div>
+          <div class="dt-field"><span class="k">Photos</span><span class="v">${photoCount || l.num_photos || '—'}${(l.images || []).length ? ' — cleaned &amp; tagged' : ' — from the listing'}</span></div>
         </div>
         <div>
           <div class="dt-field"><span class="k">Property style</span><span class="v">${esc(styleStr)}</span></div>
@@ -844,8 +863,12 @@ function openDetail(l) {
       <div class="drive-row">
         <span class="dr-ic">📁</span>
         <div class="dr-text">
-          <b>${photoCount ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in your Drive` : 'Your Google Drive'}</b>
-          ${roomsCovered ? `<span class="dr-sub">${roomsCovered}</span>` : `<span class="dr-sub">Filed on approval — one folder per property, files named by room.</span>`}
+          <b>${(l.images || []).length
+            ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in your Drive`
+            : 'Not in your Drive yet'}</b>
+          ${(l.images || []).length
+            ? `<span class="dr-sub">${roomsCovered || 'Cleaned and filed by room.'}</span>`
+            : `<span class="dr-sub">Like this property and the photos are cleaned, tagged and filed here.</span>`}
         </div>
         ${l.drive_folder_url
           ? `<a class="dr-open" href="${l.drive_folder_url}" target="_blank" title="${esc(drivePath)}">Open folder →</a>`
@@ -886,7 +909,9 @@ function wireGallery(l, shots) {
     const count = box.querySelector('.lb-count');
     const paint = () => {
       img.src = imgFor(l, shots[at]);
-      const tag = (l.images || [])[shots[at]]?.tag;
+      // Same fallback as the gallery: cleaned set if it exists, source gallery if not.
+      const tagged = (l.images || []).length ? (l.images || []) : sourcePhotos(l);
+      const tag = tagged[shots[at]]?.tag;
       count.textContent = `${at + 1} / ${shots.length}${tag ? ' · ' + tag : ''}`;
       box.querySelectorAll('.lb-strip img').forEach(t =>
         t.classList.toggle('on', +t.dataset.n === at));

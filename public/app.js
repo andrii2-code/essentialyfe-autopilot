@@ -743,16 +743,17 @@ document.addEventListener('click', async e => {
 function openDetail(l) {
   const palette = (l.color_palette || []).map(c => `<span style="background:${esc(c)}"></span>`).join('');
   const styleStr = (l.property_style || []).join(' · ') || '—';
-  // Which rooms the photo set covers. The photos themselves are in the gallery at the
-  // top now, so this is just the summary line — the room name rides each photo in the
-  // gallery viewer, and the tagged filenames are what land in his Drive folder.
+  // The gallery at the top shows every photo and names the room on each one, and the
+  // filenames in Drive carry the same tags — so neither needs repeating in full here.
+  // What is worth one line is the coverage: how many photos, and which rooms.
+  const photoCount = (l.images || []).length;
   const roomCounts = {};
   (l.images || []).forEach(im => { if (im.tag) roomCounts[im.tag] = (roomCounts[im.tag] || 0) + 1; });
   const roomsCovered = Object.entries(roomCounts)
-    .map(([room, n]) => `${esc(room)}${n > 1 ? ` <span class="muted">×${n}</span>` : ''}`)
+    .sort((a, b) => b[1] - a[1])
+    .map(([room, n]) => `${esc(room)}${n > 1 ? ` ×${n}` : ''}`)
     .join(' · ');
   const drivePath = `EssentiaLyfe – Sourcing Autopilot / ${l.address} /`;
-  const driveFiles = (l.images || []).map(im => im.name).join('   ');
   const isReady = ['ready', 'live'].includes(l.status);
 
   // The gallery, laid out like his own site (essentialyfe.com): one big photo with a
@@ -840,14 +841,15 @@ function openDetail(l) {
       <div class="dt-section-t">Description</div>
       <p class="dt-desc">${esc(l.description || '—')}</p>
 
-      ${roomsCovered ? `<div class="dt-section-t">Rooms covered</div>
-      <p class="dt-rooms">${roomsCovered}</p>` : ''}
-
-      <div class="drive-box">
-        <div class="db-head">📁 Delivered to your Google Drive</div>
-        <div class="db-path">${esc(drivePath)}</div>
-        <div class="db-files">${driveFiles ? esc(driveFiles) : 'Images are filed here on approval — one folder per property address, files named by room.'}</div>
-        ${l.drive_folder_url ? `<a class="drive-link" href="${l.drive_folder_url}" target="_blank">Open folder in Drive →</a>` : `<div class="mini-note">${state.summary?.driveMode === 'live' ? '' : 'This host has no service account, so files are prepared, not uploaded. Connecting the service account to your master folder makes this live — no code change. (Verified working in development: real folders + a tagged image were created in Drive.)'}</div>`}
+      <div class="drive-row">
+        <span class="dr-ic">📁</span>
+        <div class="dr-text">
+          <b>${photoCount ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in your Drive` : 'Your Google Drive'}</b>
+          ${roomsCovered ? `<span class="dr-sub">${roomsCovered}</span>` : `<span class="dr-sub">Filed on approval — one folder per property, files named by room.</span>`}
+        </div>
+        ${l.drive_folder_url
+          ? `<a class="dr-open" href="${l.drive_folder_url}" target="_blank" title="${esc(drivePath)}">Open folder →</a>`
+          : (state.summary?.driveMode === 'live' ? '' : `<span class="dr-pending" title="Connecting the service account to your master folder makes this live — no code change.">Prepared, not yet uploaded</span>`)}
       </div>
 
       <div class="dt-section-t">Your fields <span class="muted" style="font-weight:400;font-size:12px">— editable, saved to this property</span></div>

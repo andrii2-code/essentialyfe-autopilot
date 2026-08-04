@@ -182,6 +182,15 @@
         <div class="imp-panel hidden" id="imp-preview"></div>
         <div class="digest-msg" id="imp-msg"></div>
       </div>
+
+      <!-- Start over. Deliberately last, deliberately plain, and double-confirmed:
+           this throws away every property. Accounts and permissions are untouched. -->
+      <div class="panel" style="margin-top:18px">
+        <div class="panel-head"><h3>Start the database over</h3></div>
+        <p class="lede">Removes every property — collected and imported — so you can rebuild from a clean slate. Your account, your team and their permissions are not touched. Anything already filed in your Google Drive stays there.</p>
+        <button class="btn-ghost danger" id="btn-reset">Delete all properties</button>
+        <div class="digest-msg" id="reset-msg"></div>
+      </div>
     </section>
 
     <!-- REVIEW (swipe) -->

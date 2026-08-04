@@ -1314,6 +1314,26 @@ async function refreshDigest() {
   }
 }
 
+// Wiping the database is irreversible and the button sits in the same panel stack as
+// everyday settings, so it asks twice — once for intent, once for the count it is
+// about to destroy — rather than relying on the label alone.
+$('#btn-reset')?.addEventListener('click', async () => {
+  const msg = (t, cls = '') => { const el = $('#reset-msg'); el.className = 'digest-msg ' + cls; el.textContent = t; };
+  const btn = $('#btn-reset');
+  const n = state.summary?.counts?.sourced ?? 0;
+  if (!confirm(`Delete all ${n} properties?\n\nThis cannot be undone. Your account, your team and anything already in your Google Drive are not affected.`)) return;
+  if (!confirm('Last check — every property will be removed. Continue?')) return;
+  btn.disabled = true;
+  msg('Deleting…');
+  try {
+    await apiSend('POST', '/reset', {});
+    msg(`Deleted ${n} properties. Run the collector to start filling it again.`, 'ok');
+    await renderDashboard();
+    if (typeof renderDatabase === 'function') await renderDatabase();
+  } catch (e) { msg(e.message, 'err'); }
+  btn.disabled = false;
+});
+
 $('#btn-digest-send')?.addEventListener('click', async () => {
   const msg = (t, cls = '') => { const el = $('#digest-msg'); el.className = 'digest-msg ' + cls; el.textContent = t; };
   const btn = $('#btn-digest-send');

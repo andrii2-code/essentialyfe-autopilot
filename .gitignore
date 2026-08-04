@@ -13,4 +13,12 @@ data/
 
 # Local scratch / experiments
 _probe/
-scripts/
+
+# scripts/ is ignored by default — it is scratch — EXCEPT the ones that have to run
+# against the live environment, where the database and the Google credentials are.
+# check-drive-photos answers the one question a laptop cannot: whether the app's
+# Drive account can open the photo folders his spreadsheet links.
+scripts/*
+!scripts/check-drive-photos.js
+!scripts/check-drive-wiring.js
+!scripts/enrich-photos.js

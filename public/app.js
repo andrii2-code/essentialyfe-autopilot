@@ -182,14 +182,19 @@ async function renderDashboard() {
   const bySpec = {};
   for (const l of [...queue]) bySpec[l.area] = (bySpec[l.area] || 0) + 1;
   const total = queue.length;
-  // He asked what the data is actually pulled from. Naming one website was both
-  // vague and wrong: every listing arrives with an MLS number, and the LA feeds that
-  // reach us are CLAW (Combined L.A./Westside MLS, the Beverly Hills one) and CRMLS.
-  // Compass inventory reaches us too, through their syndication deal — their
-  // "Coming Soon" listings show up 1-3 days before they hit the MLS or Zillow.
+  // He asked what the data is actually pulled from. The honest answer is now three
+  // listing platforms searched together and de-duplicated, every record arriving from
+  // an MLS. Rather than claiming which brokerages he gets, read them off his own
+  // queue — so this row is evidence rather than a promise.
+  const brokerages = [...new Set([...queue].map(l => l.brokerage).filter(Boolean))];
+  const photoRows = [...queue].filter(l => (l.num_photos || 0) > 0 || (l.images || []).length).length;
+  const shown = brokerages.slice(0, 4).join(' · ');
+  const more = brokerages.length > 4 ? ` +${brokerages.length - 4} more` : '';
+
   $('#src-list').innerHTML = `
-    <div class="src-row"><div><div class="src-name">MLS — LA County</div><div class="src-sub">CLAW (L.A./Westside) · CRMLS · live listing data + full photo galleries</div></div><div class="src-count">+${total} new</div></div>
-    <div class="src-row"><div><div class="src-name">Compass</div><div class="src-sub">Coming Soon &amp; Private Exclusive — reaches you before the MLS</div></div><div class="src-count">on</div></div>
+    <div class="src-row"><div><div class="src-name">MLS — LA County</div><div class="src-sub">Realtor · Redfin · Zillow searched together, duplicates merged</div></div><div class="src-count">+${total} new</div></div>
+    <div class="src-row"><div><div class="src-name">Brokerages in your queue</div><div class="src-sub">${brokerages.length ? esc(shown) + esc(more) : 'Named on each property as it arrives'}</div></div><div class="src-count">${brokerages.length || '—'}</div></div>
+    <div class="src-row"><div><div class="src-name">Photo galleries</div><div class="src-sub">Full listing galleries — cleaned and tagged when you like a property</div></div><div class="src-count">${photoRows}/${total || 0}</div></div>
     <div class="src-row"><div><div class="src-name">All 3 specs</div><div class="src-sub">For-sale · Sold · Rentals</div></div><div class="src-count">on</div></div>
     <div class="src-row"><div><div class="src-name">Owner / address finder</div><div class="src-sub">Skip-trace API</div></div><div class="src-count off">Phase 2</div></div>`;
 

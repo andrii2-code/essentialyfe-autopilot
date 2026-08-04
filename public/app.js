@@ -743,13 +743,14 @@ document.addEventListener('click', async e => {
 function openDetail(l) {
   const palette = (l.color_palette || []).map(c => `<span style="background:${esc(c)}"></span>`).join('');
   const styleStr = (l.property_style || []).join(' · ') || '—';
-  // group images by tag
-  const groups = {};
-  (l.images || []).forEach((im, i) => { (groups[im.tag] = groups[im.tag] || []).push(i); });
-  const byRoom = Object.keys(groups).length
-    ? Object.entries(groups).map(([room, idxs]) => `
-        <div class="room-group"><h4>${esc(room)}</h4><div class="room-photos">${idxs.map(i => `<img src="${imgFor(l, i)}" alt="">`).join('')}</div></div>`).join('')
-    : `<div class="muted" style="font-size:12px">Images are prepared on approval.</div>`;
+  // Which rooms the photo set covers. The photos themselves are in the gallery at the
+  // top now, so this is just the summary line — the room name rides each photo in the
+  // gallery viewer, and the tagged filenames are what land in his Drive folder.
+  const roomCounts = {};
+  (l.images || []).forEach(im => { if (im.tag) roomCounts[im.tag] = (roomCounts[im.tag] || 0) + 1; });
+  const roomsCovered = Object.entries(roomCounts)
+    .map(([room, n]) => `${esc(room)}${n > 1 ? ` <span class="muted">×${n}</span>` : ''}`)
+    .join(' · ');
   const drivePath = `EssentiaLyfe – Sourcing Autopilot / ${l.address} /`;
   const driveFiles = (l.images || []).map(im => im.name).join('   ');
   const isReady = ['ready', 'live'].includes(l.status);
@@ -839,8 +840,8 @@ function openDetail(l) {
       <div class="dt-section-t">Description</div>
       <p class="dt-desc">${esc(l.description || '—')}</p>
 
-      <div class="dt-section-t">Photos by room</div>
-      <div class="by-room">${byRoom}</div>
+      ${roomsCovered ? `<div class="dt-section-t">Rooms covered</div>
+      <p class="dt-rooms">${roomsCovered}</p>` : ''}
 
       <div class="drive-box">
         <div class="db-head">📁 Delivered to your Google Drive</div>

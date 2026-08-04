@@ -138,6 +138,13 @@ function init() {
       ALTER TABLE listings ADD COLUMN IF NOT EXISTS price_changed_at TIMESTAMPTZ;
     `);
 
+    // The brokerage that listed the property (Compass, Coldwell Banker, Sotheby's).
+    // Separate from `source`, which names the MLS the record arrived through — the two
+    // were being written into one label, which read as though Compass were an MLS.
+    await pool.query(`
+      ALTER TABLE listings ADD COLUMN IF NOT EXISTS brokerage TEXT;
+    `);
+
     // Digest bookkeeping — which listings have already been reported, so a second
     // send on the same day doesn't repeat itself.
     await pool.query(`
@@ -156,10 +163,10 @@ async function upsertListing(r) {
        sleep_capacity, stand_capacity, seating_capacity,
        price, price_per_sqft, is_rental, hoa, amenities, num_photos, has_video, description, owner_info,
        is_redfin, photo_group_code, photo_positions, photo_urls,
-       enriched_by, last_updated, days_on_market)
+       enriched_by, last_updated, days_on_market, brokerage)
      VALUES ($1,$2,$3,$4,$5,$6,$7, $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
              $21,$22,$23,$24,$25,$26,$27,$28, $29,$30,$31,$32,$33, $34,$35,$36,
-             $37,$38,$39,$40,$41,$42,$43,$44,$45, $46,$47,$48,$49, $50,$51,$52)
+             $37,$38,$39,$40,$41,$42,$43,$44,$45, $46,$47,$48,$49, $50,$51,$52, $53)
      -- Identity is the property, so a re-list is the SAME row. If the price moved,
      -- record where it came from and when, and refresh the fields that go stale.
      -- His own manual fields are never touched here. The xmax = 0 test in the
@@ -173,7 +180,8 @@ async function upsertListing(r) {
        price_per_sqft = COALESCE(EXCLUDED.price_per_sqft, listings.price_per_sqft),
        last_updated = COALESCE(EXCLUDED.last_updated, listings.last_updated),
        days_on_market = COALESCE(EXCLUDED.days_on_market, listings.days_on_market),
-       source_url = COALESCE(EXCLUDED.source_url, listings.source_url)
+       source_url = COALESCE(EXCLUDED.source_url, listings.source_url),
+       brokerage = COALESCE(EXCLUDED.brokerage, listings.brokerage)
      WHERE EXCLUDED.price IS DISTINCT FROM listings.price
      RETURNING id, (xmax = 0) AS inserted, previous_price, price`,
     [
@@ -184,7 +192,7 @@ async function upsertListing(r) {
       r.sleepCapacity, r.standCapacity, r.seatingCapacity,
       r.price, r.pricePerSqft, !!r.isRental, r.hoa, J(r.amenities), r.numPhotos, !!r.hasVideo, r.description, r.ownerInfo,
       !!r.isRedfin, r.photoGroupCode, J(r.photoPositions), J(r.photoUrls),
-      r.enrichedBy, r.lastUpdated, r.daysOnMarket,
+      r.enrichedBy, r.lastUpdated, r.daysOnMarket, r.brokerage || null,
     ]
   );
   // Three outcomes, and the collector reports each differently:

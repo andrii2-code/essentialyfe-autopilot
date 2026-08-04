@@ -177,6 +177,10 @@ const FEED_COLUMNS = [
   { key: 'neighborhood',     label: 'Neighborhood',      group: 'Listing' },
   { key: 'price',            label: 'Price',             group: 'Listing', type: 'money' },
   { key: 'status',           label: 'Status',            group: 'Listing' },
+  // Where the record came from vs who listed it — two different facts, two columns.
+  { key: 'source',           label: 'Source',            group: 'Listing' },
+  { key: 'brokerage',        label: 'Brokerage',         group: 'Listing' },
+  { key: 'mls_id',           label: 'MLS #',             group: 'Listing' },
   // This is which of his three searches the property came from: for sale, sold, or
   // for rent. It was labelled "Property Type" here, which was wrong twice over — it
   // reads like Villa/Mansion (a column he actually has, further up), and it left him

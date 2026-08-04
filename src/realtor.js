@@ -129,12 +129,13 @@ function normalize(l, spec) {
   const amenities = Array.isArray(l.tags) ? l.tags.slice(0, 24).map(humanizeTag) : [];
 
   return {
-    // What he cares about is the ORIGIN of the record, not the website we read it
-    // through. Every listing arrives with an MLS number, so name the MLS when the
-    // feed tells us which one it is and fall back to a plain "MLS (live)" otherwise.
-    source: l.source?.agents?.[0]?.office_name
-      ? `MLS · ${l.source.agents[0].office_name}`
-      : (l.source?.name ? `MLS · ${l.source.name}` : 'MLS (live)'),
+    // Two DIFFERENT facts, and they were being merged into one label. `source.name`
+    // is the MLS the record came from (CLAW, CRMLS); `agents[].office_name` is the
+    // BROKERAGE that listed it (Compass, Coldwell Banker). Writing "MLS · Compass"
+    // said Compass was an MLS, which it is not. Name the MLS here, and keep the
+    // brokerage in its own field below.
+    source: l.source?.name ? `MLS · ${l.source.name}` : 'MLS (live)',
+    brokerage: l.source?.agents?.[0]?.office_name || null,
     sourceUrl: l.href || (l.permalink ? `https://www.realtor.com/realestateandhomes-detail/${l.permalink}` : null),
     mlsId: l.source?.id || null,
     listingId: l.listing_id || null,

@@ -132,12 +132,18 @@ function normalize(h, zoneLabel, spec) {
   // That provenance is what he asked to see, so it goes in `source`, not the site name.
   const sashNames = (h.sashes || []).map(s => s.sashTypeName).filter(Boolean);
   const brokerSash = sashNames.find(n => /compass|coldwell|century 21|corcoran|sotheby/i.test(n));
+  const brokerage = brokerSash ? brokerSash.replace(/\s+coming soon$/i, '') : null;
 
   return {
     // identity
-    source: brokerSash
-      ? `${brokerSash.replace(/\s+coming soon$/i, '')} (pre-MLS)`
+    // A brokerage sash means the listing reached us through that brokerage's own
+    // syndication BEFORE it hit the MLS — that is a real statement about where the
+    // record came from, so it belongs in `source`. Everything else came via an MLS.
+    // The brokerage name is also kept on its own, so nothing implies Compass is an MLS.
+    source: brokerage
+      ? `${brokerage} (pre-MLS)`
       : (h.mlsId?.value ? 'MLS (live)' : 'Redfin (live)'),
+    brokerage,
     sourceUrl: h.url ? `https://www.redfin.com${h.url}` : null,
     mlsId: h.mlsId?.value || null,
     listingId: h.listingId || null,

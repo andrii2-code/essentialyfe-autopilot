@@ -849,6 +849,7 @@ function openDetail(l) {
           <div class="dt-field"><span class="k">Year built</span><span class="v">${l.year_built ?? '—'}</span></div>
           <div class="dt-field"><span class="k">County</span><span class="v">${esc(l.county || '—')}</span></div>
           <div class="dt-field"><span class="k">Where it came from</span><span class="v">${esc(l.source || '—')}</span></div>
+          <div class="dt-field"><span class="k">Brokerage</span><span class="v">${esc(l.brokerage || '—')}</span></div>
           <div class="dt-field"><span class="k">MLS #</span><span class="v">${esc(l.mls_id || '—')}</span></div>
           <div class="dt-field"><span class="k">Listing page</span><span class="v">${detailLink(l.listing_url || l.source_url)}</span></div>
           <div class="dt-field"><span class="k">Photos</span><span class="v">${photoCount || l.num_photos || '—'}${(l.images || []).length ? ' — cleaned &amp; tagged' : ' — from the listing'}</span></div>

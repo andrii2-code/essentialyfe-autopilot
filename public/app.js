@@ -1385,9 +1385,10 @@ $('#btn-imp-photos')?.addEventListener('click', async () => {
       msg('Every property already has photos.', 'ok');
     } else {
       const bits = [`${r.updated} of ${r.checked} now have their real photos`];
-      if (r.streetViewOnly || r.notFound) {
-        bits.push(`${r.streetViewOnly + r.notFound} had none available from the listing data`);
-      }
+      const where = [r.fromDrive ? `${r.fromDrive} from your Drive folders` : null,
+                     r.fromListing ? `${r.fromListing} from the listing data` : null].filter(Boolean);
+      if (where.length) bits.push(where.join(', '));
+      if (r.noneAvailable) bits.push(`${r.noneAvailable} had none available`);
       if (r.remaining) bits.push(`${r.remaining} still to do`);
       msg(bits.join(' · '), 'ok');
       await renderDatabase();
@@ -1883,10 +1884,17 @@ function renderImportPreview(d) {
       $('#imp-progress').className = 'fld-status ok';
       // Say what happened to the photos too — an import that silently left them as
       // stand-ins looked like the feature had simply not worked.
+      // Name both sources: his own Drive folders come first and are his photographs,
+      // the listing lookup fills whatever is left. Seeing the split tells him at a
+      // glance whether his folders are readable by the app.
       const p = r.photos;
       const photoNote = p
-        ? ` · photos found for ${p.updated} of ${p.checked}`
-          + (p.noneAvailable ? ` (${p.noneAvailable} have none published)` : '')
+        ? ` · photos for ${p.updated} of ${p.checked}`
+          + (p.fromDrive || p.fromListing
+              ? ` (${[p.fromDrive ? `${p.fromDrive} from your Drive` : null,
+                      p.fromListing ? `${p.fromListing} from the listing` : null]
+                    .filter(Boolean).join(', ')})` : '')
+          + (p.noneAvailable ? ` · ${p.noneAvailable} had none` : '')
           + (p.remaining ? ` · ${p.remaining.toLocaleString()} still to fetch below` : '')
         : '';
       $('#imp-progress').textContent =

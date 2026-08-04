@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { q, init, importListings } = require('./db');
 const importer = require('./import');
 const enrichPhotos = require('./photo-enrich');
+const drivePhotos = require('./drive-photos');
 const { runCollector, processApproved } = require('./pipeline');
 const { driveMode, fetchDriveFile } = require('./drive');
 const auth = require('./auth');
@@ -438,6 +439,26 @@ app.get('/api/listing/:id/image/:idx', auth.requireAuth, wrap(async (req, res) =
   res.send(buf);
 }));
 
+// Serve any Drive image by id. His own photo folders are shared with him, not with
+// whoever is looking at the app, so a direct Drive URL in an <img> renders as a broken
+// image for everyone else. Proxying through here means the app's own credentials do
+// the fetching and the browser just gets JPEG bytes.
+app.get('/api/drive-image/:fileId', auth.requireAuth, wrap(async (req, res) => {
+  const id = String(req.params.fileId);
+  if (!/^[A-Za-z0-9_-]{10,}$/.test(id)) return res.status(400).json({ error: 'bad file id' });
+
+  let buf = imageCache.get(id);
+  if (!buf) {
+    buf = await fetchDriveFile(id);
+    if (!buf) return res.status(404).json({ error: 'could not fetch that image' });
+    if (imageCache.size > 200) imageCache.clear();
+    imageCache.set(id, buf);
+  }
+  res.set('Content-Type', 'image/jpeg');
+  res.set('Cache-Control', 'private, max-age=3600');
+  res.send(buf);
+}));
+
 // ---- swipe: approve / pass ----
 app.post('/api/listing/:id/pass', auth.requireAuth, wrap(async (req, res) => {
   const l = await q.setStatus(+req.params.id, 'passed');
@@ -595,22 +616,39 @@ app.post('/api/import/commit', auth.requireAdmin, wrap(async (req, res) => {
   // stops here shows library stand-ins — which is what he saw. Bounded, because a
   // 6,789-row import would otherwise spend a month of credits in one request; the
   // rest are picked up by the "Fetch photos" control or the nightly pass.
+  // HIS OWN Drive folders first, then the address lookup for whatever is left.
+  // Every row of his sheet links a folder (29 of 29 in his test export, against 26 of
+  // 29 that resolve by address), and those are his own photographs rather than the
+  // listing agent's — better coverage and better pictures. The API lookup stays for
+  // folders that are empty, unshared, or not Drive links.
   let photos = null;
-  if (process.env.REALTYAPI_KEY) {
-    try {
-      const rows = await q.withoutPhotos();
-      const auto = Math.max(0, Math.min(Number(process.env.IMPORT_PHOTO_LIMIT) || 60, rows.length));
-      if (auto) {
-        const b = await enrichPhotos.backfill(rows, { limit: auto });
-        for (const u of b.updates) await q.setPhotos(u.id, u.photos, u.propertyUrl);
-        photos = {
-          checked: b.used, updated: b.updates.length,
-          noneAvailable: b.streetViewOnly + b.notFound,
-          remaining: Math.max(0, rows.length - b.used),
-        };
+  try {
+    const rows = await q.withoutPhotos();
+    const cap = Math.max(0, Math.min(Number(process.env.IMPORT_PHOTO_LIMIT) || 60, rows.length));
+    if (cap) {
+      const fromDrive = await drivePhotos.backfill(rows, { limit: cap });
+      for (const u of fromDrive.updates) await q.setPhotos(u.id, u.photos, null);
+
+      let viaApi = { updates: [], used: 0, streetViewOnly: 0, notFound: 0 };
+      if (process.env.REALTYAPI_KEY) {
+        const stillEmpty = await q.withoutPhotos();
+        const left = Math.max(0, cap - fromDrive.withPhotos);
+        if (left && stillEmpty.length) {
+          viaApi = await enrichPhotos.backfill(stillEmpty, { limit: left });
+          for (const u of viaApi.updates) await q.setPhotos(u.id, u.photos, u.propertyUrl);
+        }
       }
-    } catch (e) { console.error('[import] photo backfill:', e.message); }
-  }
+      const done = fromDrive.withPhotos + viaApi.updates.length;
+      photos = {
+        checked: rows.length,
+        updated: done,
+        fromDrive: fromDrive.withPhotos,
+        fromListing: viaApi.updates.length,
+        noneAvailable: Math.max(0, Math.min(cap, rows.length) - done),
+        remaining: Math.max(0, rows.length - cap),
+      };
+    }
+  } catch (e) { console.error('[import] photo backfill:', e.message); }
   res.json({ ...r, photos });
 }));
 
@@ -620,17 +658,30 @@ app.post('/api/import/commit', auth.requireAdmin, wrap(async (req, res) => {
 // and that is enough to look the real listing photos up. Kept separate from the import
 // itself because it spends API credits per property — he decides how many.
 app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
-  if (!process.env.REALTYAPI_KEY) {
-    return res.status(400).json({ error: 'No listing-data key is configured, so photos cannot be looked up.' });
-  }
   const limit = Math.max(1, Math.min(500, Number(req.body?.limit) || 25));
   const rows = await q.withoutPhotos();
-  const { updates, used, withPhotos, streetViewOnly, notFound } =
-    await enrichPhotos.backfill(rows, { limit });
-  for (const u of updates) await q.setPhotos(u.id, u.photos, u.propertyUrl);
+
+  // Same order as the import: his own Drive folders, then the listing lookup.
+  const fromDrive = await drivePhotos.backfill(rows, { limit });
+  for (const u of fromDrive.updates) await q.setPhotos(u.id, u.photos, null);
+
+  let viaApi = { updates: [], used: 0 };
+  if (process.env.REALTYAPI_KEY) {
+    const stillEmpty = await q.withoutPhotos();
+    const left = Math.max(0, limit - fromDrive.withPhotos);
+    if (left && stillEmpty.length) {
+      viaApi = await enrichPhotos.backfill(stillEmpty, { limit: left });
+      for (const u of viaApi.updates) await q.setPhotos(u.id, u.photos, u.propertyUrl);
+    }
+  }
+  const done = fromDrive.withPhotos + viaApi.updates.length;
   res.json({
-    checked: used, updated: updates.length, withPhotos, streetViewOnly, notFound,
-    remaining: Math.max(0, rows.length - used),
+    checked: Math.min(limit, rows.length),
+    updated: done,
+    fromDrive: fromDrive.withPhotos,
+    fromListing: viaApi.updates.length,
+    noneAvailable: Math.max(0, Math.min(limit, rows.length) - done),
+    remaining: Math.max(0, rows.length - limit),
   });
 }));
 

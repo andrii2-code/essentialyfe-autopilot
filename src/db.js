@@ -472,7 +472,7 @@ const q = {
   // a tiered property is one he actually works with, and credits are finite.
   async withoutPhotos() {
     const { rows } = await pool.query(`
-      SELECT id, address, street_line, city, state, zip, photo_urls
+      SELECT id, address, street_line, city, state, zip, photo_urls, photos_url
         FROM listings
        WHERE (photo_urls IS NULL OR photo_urls = '' OR photo_urls = '[]')
          AND (address IS NOT NULL OR street_line IS NOT NULL)

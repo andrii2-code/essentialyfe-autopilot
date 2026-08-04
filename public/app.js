@@ -784,11 +784,19 @@ function openDetail(l) {
   const THUMBS = 4;                       // beside the main image
   const strip = shots.slice(1, 1 + THUMBS);
   const moreCount = Math.max(0, shots.length - (1 + THUMBS));
+  // Photos only go through the cleaning pipeline when he likes a property, so anything
+  // he has not approved is the raw listing image — MLS corner logo still on it. Say so
+  // on the photo itself rather than letting him wonder why this one looks different.
+  const cleaned = (l.images || []).length > 0;
+  const rawBadge = (!cleaned && shotCount)
+    ? `<span class="dt-gal-raw" title="Photos are cleaned, tagged and filed in your Drive when you like a property.">Original listing photo — not cleaned yet</span>`
+    : '';
   const gallery = `
     <div class="dt-gal">
       <button class="dt-gal-main" data-photo="0">
         <img src="${imgFor(l, shots[0])}" alt="">
         ${isReady ? '<span class="dt-status">READY</span>' : ''}
+        ${rawBadge}
       </button>
       ${strip.length ? `<div class="dt-gal-side">
         ${strip.map((i, n) => `
@@ -912,7 +920,10 @@ function wireGallery(l, shots) {
       // Same fallback as the gallery: cleaned set if it exists, source gallery if not.
       const tagged = (l.images || []).length ? (l.images || []) : sourcePhotos(l);
       const tag = tagged[shots[at]]?.tag;
-      count.textContent = `${at + 1} / ${shots.length}${tag ? ' · ' + tag : ''}`;
+      // The MLS corner logo is still on these until the property is liked, so the
+      // counter says which kind of photo he is looking at.
+      const raw = (l.images || []).length ? '' : ' · original listing photo';
+      count.textContent = `${at + 1} / ${shots.length}${tag ? ' · ' + tag : ''}${raw}`;
       box.querySelectorAll('.lb-strip img').forEach(t =>
         t.classList.toggle('on', +t.dataset.n === at));
       box.querySelector('.lb-strip img.on')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });

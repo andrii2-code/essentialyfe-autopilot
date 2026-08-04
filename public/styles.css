@@ -246,6 +246,12 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .dt-gal-all:hover{background:var(--panel2)}
 .dt-gal .dt-status{position:absolute;top:14px;left:14px;background:rgba(47,158,109,.92);color:#fff;
   font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px}
+/* Says the photo is the raw listing image — the MLS corner logo is still on it, and
+   will be until he likes the property and the cleaning pipeline runs. Sits top-left,
+   away from the bottom-right corner where that logo actually is. */
+.dt-gal .dt-gal-raw{position:absolute;top:14px;left:14px;background:rgba(15,27,45,.72);color:#fff;
+  font-size:11px;font-weight:500;padding:4px 12px;border-radius:20px;backdrop-filter:blur(4px)}
+.dt-gal .dt-status ~ .dt-gal-raw{top:46px}
 @media(max-width:760px){
   .dt-gal{grid-template-columns:1fr}
   .dt-gal-main{height:240px}

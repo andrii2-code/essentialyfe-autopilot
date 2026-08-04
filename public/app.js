@@ -1370,6 +1370,32 @@ $('#btn-reset')?.addEventListener('click', async () => {
   btn.disabled = false;
 });
 
+// Photos for imported properties. Reports what it found in his terms — how many now
+// have pictures, and how many the data source simply has none for — because a bare
+// "25 checked" would not tell him whether it worked.
+$('#btn-imp-photos')?.addEventListener('click', async () => {
+  const msg = (t, cls = '') => { const el = $('#imp-photos-msg'); el.className = 'digest-msg ' + cls; el.textContent = t; };
+  const btn = $('#btn-imp-photos');
+  const limit = +($('#imp-photos-n')?.value || 25);
+  btn.disabled = true;
+  msg(`Looking up ${limit} properties… this takes a moment.`);
+  try {
+    const r = await apiSend('POST', '/import/photos', { limit });
+    if (!r.checked) {
+      msg('Every property already has photos.', 'ok');
+    } else {
+      const bits = [`${r.updated} of ${r.checked} now have their real photos`];
+      if (r.streetViewOnly || r.notFound) {
+        bits.push(`${r.streetViewOnly + r.notFound} had none available from the listing data`);
+      }
+      if (r.remaining) bits.push(`${r.remaining} still to do`);
+      msg(bits.join(' · '), 'ok');
+      await renderDatabase();
+    }
+  } catch (e) { msg(e.message, 'err'); }
+  btn.disabled = false;
+});
+
 $('#btn-digest-send')?.addEventListener('click', async () => {
   const msg = (t, cls = '') => { const el = $('#digest-msg'); el.className = 'digest-msg ' + cls; el.textContent = t; };
   const btn = $('#btn-digest-send');

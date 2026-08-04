@@ -265,6 +265,10 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .btn-ghost.danger{color:#b03a2e;border-color:#e3b5ae}
 .btn-ghost.danger:hover{background:#b03a2e;color:#fff;border-color:#b03a2e}
 :root[data-theme="dark"] .btn-ghost.danger{color:#e08b7f;border-color:rgba(224,139,127,.4)}
+/* Photo backfill sits under the import, separated because it is a second step he
+   takes after the spreadsheet is in, not part of the upload itself. */
+.imp-photos{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.imp-photos-t{font-size:13px;font-weight:600;color:var(--heading)}
 .warn{color:#b03a2e;font-weight:600}
 :root[data-theme="dark"] .warn{color:#e08b7f}
 .dt-gal .dt-status ~ .dt-gal-raw{top:46px}

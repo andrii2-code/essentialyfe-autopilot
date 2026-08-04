@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { q, init, importListings } = require('./db');
 const importer = require('./import');
+const enrichPhotos = require('./photo-enrich');
 const { runCollector, processApproved } = require('./pipeline');
 const { driveMode, fetchDriveFile } = require('./drive');
 const auth = require('./auth');
@@ -500,10 +501,14 @@ app.get('/api/digest/preview', auth.requireAdmin, wrap(async (req, res) => {
 app.post('/api/digest/send', auth.requireAdmin, wrap(async (req, res) => {
   const days = Math.min(Math.max(+(req.body?.days || 1), 1), 90);
   const toMe = req.body?.toMe !== false;
+  // DIGEST_TEST_TO redirects "Send it to me now" to one address, so the daily email can
+  // be checked from an inbox we control without changing anyone's account. Unset it and
+  // the button goes back to mailing whoever is signed in — no code change to undo.
+  const testTo = (process.env.DIGEST_TEST_TO || '').trim() || null;
   const r = await digest.sendDigest({
     days,
     force: req.body?.force !== false,
-    to: toMe ? req.user.email : null,
+    to: toMe ? (testTo || req.user.email) : null,
   });
   res.json(r);
 }));
@@ -585,6 +590,26 @@ app.post('/api/import/commit', auth.requireAdmin, wrap(async (req, res) => {
   const r = await importListings(held.rows);
   await q.newRun(held.rows.length, r.inserted, `import: ${r.inserted} added, ${r.updated} updated from ${held.filename || 'spreadsheet'}`);
   res.json(r);
+}));
+
+// ---- photos for imported properties (admin only) ----
+// His sheet links a photo FOLDER per property, never individual images, so imported
+// rows arrive with nothing for the gallery to draw. Every row does carry an address,
+// and that is enough to look the real listing photos up. Kept separate from the import
+// itself because it spends API credits per property — he decides how many.
+app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
+  if (!process.env.REALTYAPI_KEY) {
+    return res.status(400).json({ error: 'No listing-data key is configured, so photos cannot be looked up.' });
+  }
+  const limit = Math.max(1, Math.min(500, Number(req.body?.limit) || 25));
+  const rows = await q.withoutPhotos();
+  const { updates, used, withPhotos, streetViewOnly, notFound } =
+    await enrichPhotos.backfill(rows, { limit });
+  for (const u of updates) await q.setPhotos(u.id, u.photos, u.propertyUrl);
+  res.json({
+    checked: used, updated: updates.length, withPhotos, streetViewOnly, notFound,
+    remaining: Math.max(0, rows.length - used),
+  });
 }));
 
 // ---- reset (admin only) ----

@@ -181,6 +181,24 @@
 
         <div class="imp-panel hidden" id="imp-preview"></div>
         <div class="digest-msg" id="imp-msg"></div>
+
+        <!-- Your sheet links a photo folder per property, not the photos themselves,
+             so imported rows arrive without a gallery. Every row has an address, and
+             that is enough to fetch the real listing photos. -->
+        <div class="imp-photos">
+          <div class="imp-photos-t">Photos for imported properties</div>
+          <p class="lede" style="margin:4px 0 10px">Your spreadsheet links a folder per property rather than the pictures themselves, so imported homes come in without a gallery. This looks each one up by address and brings in its real listing photos.</p>
+          <div class="auto-inline">
+            <button class="btn-ghost" id="btn-imp-photos">⤓ Fetch photos for</button>
+            <select class="fld-input" id="imp-photos-n" style="width:auto">
+              <option value="25">25 properties</option>
+              <option value="50">50 properties</option>
+              <option value="100">100 properties</option>
+              <option value="250">250 properties</option>
+            </select>
+          </div>
+          <div class="digest-msg" id="imp-photos-msg"></div>
+        </div>
       </div>
 
       <!-- Start over. Deliberately last, deliberately plain, and double-confirmed:

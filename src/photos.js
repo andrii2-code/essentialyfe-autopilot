@@ -57,9 +57,18 @@ function photosFor(listing, max = null) {
   const real = realRedfinPhotos(listing, cap > 0 ? cap : 60);
   if (real && real.length) return { source: 'redfin-real', items: limit(real.map((url) => ({ url, tag: null }))) };
 
+  // No real photos for this listing. The stock pool exists so a property is not a
+  // blank card, but these are NOT pictures of this house — Redfin serves photos only
+  // for its own brokered listings from a datacenter IP, which is roughly a fifth of
+  // LA. Flagging it as `stand-in` is what lets the app say so instead of passing
+  // library images off as the property, which is what he caught on 664 Radcliffe.
+  // ALLOW_STAND_IN_PHOTOS=false turns them off entirely and shows nothing instead.
+  if (process.env.ALLOW_STAND_IN_PHOTOS === 'false') {
+    return { source: 'none', items: [] };
+  }
   const id = listing.id ?? listing.listing_id ?? listing.listingId ?? listing.address ?? '0';
   const n = listing.num_photos || listing.numPhotos || 7;
-  return { source: 'pool', items: limit(pickImages(id, n, POOL).map((url) => ({ url, tag: null }))) };
+  return { source: 'stand-in', items: limit(pickImages(id, n, POOL).map((url) => ({ url, tag: null }))) };
 }
 
 module.exports = { photosFor, realRedfinPhotos };

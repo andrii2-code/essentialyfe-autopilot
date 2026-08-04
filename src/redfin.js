@@ -357,7 +357,12 @@ function normalizeRental(h, zoneLabel) {
 // Apply HIS spec filters in code (gis ignores min_price/beds params).
 function passesSpec(rec) {
   if (rec.spec === 'for-rent') {
-    return (rec.beds ?? 0) >= 3 && (rec.price ?? 0) >= 15000;
+    // Upper bound as well as lower. Without it a sale price sails through as "rent"
+    // and the card reads "$3,795,000/mo" — which is how a mislabelled sale listing
+    // survived in the database. The real feed tops out around $85k/mo in LA, so
+    // anything past $150k is a sale price wearing the wrong label.
+    const rent = rec.price ?? 0;
+    return (rec.beds ?? 0) >= 3 && rent >= 15000 && rent <= 150000;
   }
   // for-sale & sold: 3bd+, $3.9M+
   return (rec.beds ?? 0) >= 3 && (rec.price ?? 0) >= 3900000;

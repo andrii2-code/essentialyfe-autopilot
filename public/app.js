@@ -788,9 +788,15 @@ function openDetail(l) {
   // he has not approved is the raw listing image — MLS corner logo still on it. Say so
   // on the photo itself rather than letting him wonder why this one looks different.
   const cleaned = (l.images || []).length > 0;
-  const rawBadge = (!cleaned && shotCount)
-    ? `<span class="dt-gal-raw" title="Photos are cleaned, tagged and filed in your Drive when you like a property.">Original listing photo — not cleaned yet</span>`
-    : '';
+  // No real photos at all: the card falls back to library images so it is not blank,
+  // but they are NOT this house. Say so plainly — he spotted this on 664 Radcliffe,
+  // where the card showed a glass villa and the listing is a small white bungalow.
+  const standIn = !cleaned && shotCount === 0;
+  const rawBadge = standIn
+    ? `<span class="dt-gal-raw stand-in" title="This listing's own photos are not available from our data source. These are library images, not this property.">⚠ Stand-in images — not this property</span>`
+    : (!cleaned && shotCount)
+      ? `<span class="dt-gal-raw" title="Photos are cleaned, tagged and filed in your Drive when you like a property.">Original listing photo — not cleaned yet</span>`
+      : '';
   const gallery = `
     <div class="dt-gal">
       <button class="dt-gal-main" data-photo="0">
@@ -852,7 +858,9 @@ function openDetail(l) {
           <div class="dt-field"><span class="k">Brokerage</span><span class="v">${esc(l.brokerage || '—')}</span></div>
           <div class="dt-field"><span class="k">MLS #</span><span class="v">${esc(l.mls_id || '—')}</span></div>
           <div class="dt-field"><span class="k">Listing page</span><span class="v">${detailLink(l.listing_url || l.source_url)}</span></div>
-          <div class="dt-field"><span class="k">Photos</span><span class="v">${photoCount || l.num_photos || '—'}${(l.images || []).length ? ' — cleaned &amp; tagged' : ' — from the listing'}</span></div>
+          <div class="dt-field"><span class="k">Photos</span><span class="v">${standIn
+            ? `<span class="warn">none for this listing</span>`
+            : `${photoCount || l.num_photos || '—'}${(l.images || []).length ? ' — cleaned &amp; tagged' : ' — from the listing'}`}</span></div>
         </div>
         <div>
           <div class="dt-field"><span class="k">Property style</span><span class="v">${esc(styleStr)}</span></div>

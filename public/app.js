@@ -4,16 +4,19 @@ const $$ = s => [...document.querySelectorAll(s)];
 const fmt = n => n == null ? '—' : '$' + Number(n).toLocaleString();
 const esc = s => (s == null ? '' : String(s)).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-// Fallback imagery only if a listing has no real photos yet.
-const IMGS = [
-  'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=800&q=70',
-  'https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?w=800&q=70',
-  'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=800&q=70',
-  'https://images.unsplash.com/photo-1613490493576-7fde63acd811?w=800&q=70',
-  'https://images.unsplash.com/photo-1600566753086-00f18fb6b3ea?w=800&q=70',
-  'https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?w=800&q=70',
-  'https://images.unsplash.com/photo-1600047509807-ba8f99d2cdde?w=800&q=70',
-];
+// Shown when a property genuinely has no photograph — a neutral grey card that reads
+// as "no photo", not a picture of somebody else's house. The stock library that used
+// to sit here is gone: he opened a small white bungalow and saw a glass villa.
+const PLACEHOLDER =
+  'data:image/svg+xml;charset=utf-8,'
+  + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
+<rect width="800" height="600" fill="#e8eaed"/>
+<g fill="#b3b8c0" transform="translate(400 288)">
+<path d="M-46-16 0-52l46 36v50a6 6 0 0 1-6 6H-40a6 6 0 0 1-6-6z"/>
+<rect x="-14" y="10" width="28" height="30" fill="#e8eaed"/>
+</g>
+<text x="400" y="372" font-family="Inter,system-ui,sans-serif" font-size="19"
+ fill="#98a0ab" text-anchor="middle">No photo available</text></svg>`);
 
 // Parse a listing's real photo gallery: photo_urls is [{url,tag}] or [url] (or a
 // JSON string of either). Returns an array of URL strings.
@@ -56,9 +59,12 @@ function imgFor(listing, i = 0) {
     }
     const photos = realPhotos(listing);
     if (photos.length) return photos[i % photos.length];
-    return IMGS[(Number(listing.id) + i) % IMGS.length];
+    // No real photo for this property. Show a plain placeholder rather than a stock
+    // house: he caught a glass villa standing in for a small white bungalow, and a
+    // picture of the wrong home is worse than no picture at all.
+    return PLACEHOLDER;
   }
-  return IMGS[(Number(listing) + i) % IMGS.length];
+  return PLACEHOLDER;
 }
 
 let state = { summary: null, queue: [], swipeIdx: 0, user: null };
@@ -828,7 +834,11 @@ function openDetail(l) {
   // Photos only go through the cleaning pipeline when he likes a property, so anything
   // he has not approved is the raw listing image — MLS corner logo still on it. Say so
   // on the photo itself rather than letting him wonder why this one looks different.
-  const cleaned = (l.images || []).length > 0;
+  // Photos read out of HIS OWN Drive folder are already the finished article — he
+  // cleaned and filed them himself. They are served through /api/drive-image, which is
+  // what identifies them. Nothing about them needs the approval pipeline.
+  const fromHisDrive = sourcePhotos(l).some(p => /^\/api\/drive-image\//.test(p.url || ''));
+  const cleaned = (l.images || []).length > 0 || fromHisDrive;
   // No real photos at all: the card falls back to library images so it is not blank,
   // but they are NOT this house. Say so plainly — he spotted this on 664 Radcliffe,
   // where the card showed a glass villa and the listing is a small white bungalow.
@@ -837,13 +847,15 @@ function openDetail(l) {
   // Drive or Dropbox FOLDER, not individual photos. So the gallery has nothing to draw
   // and the honest thing is to point at the folder he already keeps them in.
   const ownFolder = standIn && l.photos_url ? l.photos_url : null;
-  const rawBadge = ownFolder
-    ? `<span class="dt-gal-raw stand-in" title="Imported from your spreadsheet, which links a photo folder rather than individual images.">⚠ Stand-in images — your photos are in the linked folder</span>`
-    : standIn
-      ? `<span class="dt-gal-raw stand-in" title="This listing's own photos are not available from our data source. These are library images, not this property.">⚠ Stand-in images — not this property</span>`
-      : (!cleaned && shotCount)
-        ? `<span class="dt-gal-raw" title="Photos are cleaned, tagged and filed in your Drive when you like a property.">Original listing photo — not cleaned yet</span>`
-        : '';
+  const rawBadge = fromHisDrive
+    ? `<span class="dt-gal-raw own" title="Read from the photo folder your spreadsheet links for this property.">📁 Your own photos</span>`
+    : ownFolder
+      ? `<span class="dt-gal-raw stand-in" title="Imported from your spreadsheet, which links a photo folder rather than individual images.">⚠ No photos yet — yours are in the linked folder</span>`
+      : standIn
+        ? `<span class="dt-gal-raw stand-in" title="Neither your folder nor the listing data has a photograph of this property.">⚠ No photo available for this property</span>`
+        : (!cleaned && shotCount)
+          ? `<span class="dt-gal-raw" title="Photos are cleaned, tagged and filed in your Drive when you like a property.">Original listing photo — not cleaned yet</span>`
+          : '';
   const gallery = `
     <div class="dt-gal">
       <button class="dt-gal-main" data-photo="0">
@@ -889,13 +901,21 @@ function openDetail(l) {
     <div class="dt-body">
       <!-- Review from here too, so he can decide straight from the database rather than
            having to find the property again in the review queue. -->
+      ${fromHisDrive ? `
+      <!-- Already his: the photos came out of his own Drive folder, cleaned and filed
+           by him. There is nothing to approve, so the bar links the folder instead of
+           offering Like and Pass. -->
+      <div class="dt-decide own">
+        <div class="dt-decide-now">Already yours. These photos are from your own Drive folder.</div>
+        ${l.photos_url ? `<a class="act own-folder" href="${esc(l.photos_url)}" target="_blank" rel="noopener">📁 Open the folder</a>` : ''}
+      </div>` : `
       <div class="dt-decide" id="dt-decide">
         <div class="dt-decide-now" id="dt-decide-now">${decisionText(l.status)}</div>
         <div class="dt-decide-acts">
           <button class="act pass" id="dt-pass">✕ Pass</button>
           <button class="act like" id="dt-like">♡ Like</button>
         </div>
-      </div>
+      </div>`}
 
       <div class="dt-cols">
         <div>
@@ -935,16 +955,22 @@ function openDetail(l) {
       <div class="drive-row">
         <span class="dr-ic">📁</span>
         <div class="dr-text">
-          <b>${(l.images || []).length
-            ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in your Drive`
-            : 'Not in your Drive yet'}</b>
-          ${(l.images || []).length
-            ? `<span class="dr-sub">${roomsCovered || 'Cleaned and filed by room.'}</span>`
-            : `<span class="dr-sub">Like this property and the photos are cleaned, tagged and filed here.</span>`}
+          <b>${fromHisDrive
+            ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in your own folder`
+            : (l.images || []).length
+              ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in your Drive`
+              : 'Not in your Drive yet'}</b>
+          ${fromHisDrive
+            ? `<span class="dr-sub">Already cleaned and filed by you, so nothing to approve.</span>`
+            : (l.images || []).length
+              ? `<span class="dr-sub">${roomsCovered || 'Cleaned and filed by room.'}</span>`
+              : `<span class="dr-sub">Like this property and the photos are cleaned, tagged and filed here.</span>`}
         </div>
-        ${l.drive_folder_url
-          ? `<a class="dr-open" href="${l.drive_folder_url}" target="_blank" title="${esc(drivePath)}">Open folder →</a>`
-          : (state.summary?.driveMode === 'live' ? '' : `<span class="dr-pending" title="Connecting the service account to your master folder makes this live — no code change.">Prepared, not yet uploaded</span>`)}
+        ${fromHisDrive && l.photos_url
+          ? `<a class="dr-open" href="${esc(l.photos_url)}" target="_blank" rel="noopener">Open folder →</a>`
+          : l.drive_folder_url
+            ? `<a class="dr-open" href="${l.drive_folder_url}" target="_blank" title="${esc(drivePath)}">Open folder →</a>`
+            : (state.summary?.driveMode === 'live' ? '' : `<span class="dr-pending" title="Connecting the service account to your master folder makes this live — no code change.">Prepared, not yet uploaded</span>`)}
       </div>
 
       <div class="dt-section-t">Your fields <span class="muted" style="font-weight:400;font-size:12px">— editable, saved to this property</span></div>

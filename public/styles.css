@@ -260,6 +260,14 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
   font-size:11px;font-weight:500;padding:4px 12px;border-radius:20px;backdrop-filter:blur(4px)}
 /* Stronger than the "not cleaned yet" note: these images are not the property at all. */
 .dt-gal .dt-gal-raw.stand-in{background:rgba(176,58,46,.88);font-weight:600}
+/* His own photographs, out of his own folder — a fact worth stating, not a warning. */
+.dt-gal .dt-gal-raw.own{background:rgba(47,158,109,.9);font-weight:600}
+/* Nothing to approve on a property that is already his, so the bar carries the link
+   to his folder where Like and Pass would otherwise be. */
+.dt-decide.own{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.dt-decide.own .act.own-folder{background:var(--panel);border:1px solid var(--line);
+  color:var(--gold-d);text-decoration:none;font-weight:600;white-space:nowrap}
+.dt-decide.own .act.own-folder:hover{background:var(--gold);color:#231a00;border-color:var(--gold)}
 /* Destructive action — visually distinct from every other button in Settings so it
    cannot be clicked by momentum while working down the page. */
 .btn-ghost.danger{color:#b03a2e;border-color:#e3b5ae}

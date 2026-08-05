@@ -1313,13 +1313,24 @@ async function mountEditableFields(listing) {
   const defs = await loadFieldDefs();
   if (!defs.fields.length) { host.innerHTML = `<div class="muted" style="font-size:12px">No editable fields configured.</div>`; return; }
 
-  const groups = defs.groups.map(g => {
+  // Ten groups and sixty fields stacked vertically is what made him say "scroll down a
+  // bit" four times on the call to reach one value. Tabs put every section one click
+  // from the top, so nothing is ever more than a screen away.
+  const live = defs.groups.filter(g => defs.fields.some(f => f.group === g));
+
+  const tabs = live.map((g, i) => {
     const inGroup = defs.fields.filter(f => f.group === g);
-    if (!inGroup.length) return '';
+    const isPrivate = inGroup.some(f => f.sensitive);
+    return `<button class="fld-tab${i ? '' : ' on'}" data-tab="${i}" type="button">${esc(g)}${
+      isPrivate ? ' <span class="fld-lock-s" title="Only people you give access to can see these">🔒</span>' : ''}</button>`;
+  }).join('');
+
+  const panes = live.map((g, i) => {
+    const inGroup = defs.fields.filter(f => f.group === g);
     const isPrivate = inGroup.some(f => f.sensitive);
     return `
-      <div class="fld-group">
-        <div class="fld-group-t">${esc(g)}${isPrivate ? ' <span class="fld-lock" title="Only people you give access to can see these">🔒 restricted</span>' : ''}</div>
+      <div class="fld-pane${i ? ' hidden' : ''}" data-pane="${i}">
+        ${isPrivate ? `<div class="fld-pane-note">🔒 Only people you give access to can see these.</div>` : ''}
         <div class="fld-grid">
           ${inGroup.map(f => `
             <label class="fld">
@@ -1331,12 +1342,23 @@ async function mountEditableFields(listing) {
   }).join('');
 
   host.innerHTML = `
-    ${groups}
+    <div class="fld-tabs" role="tablist">${tabs}</div>
+    <div class="fld-panes">${panes}</div>
     ${defs.canViewSensitive ? '' : `<div class="fld-note">🔒 Contacts and private notes are restricted — ask an admin for access.</div>`}
     <div class="fld-actions">
       <button class="btn-primary" id="fld-save">Save changes</button>
       <span class="fld-status" id="fld-status"></span>
     </div>`;
+
+  // One save covers every tab, so switching sections must not lose an edit: the panes
+  // are hidden, never re-rendered, and the inputs stay in the DOM throughout.
+  host.querySelectorAll('.fld-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const n = btn.dataset.tab;
+      host.querySelectorAll('.fld-tab').forEach(b => b.classList.toggle('on', b === btn));
+      host.querySelectorAll('.fld-pane').forEach(p => p.classList.toggle('hidden', p.dataset.pane !== n));
+    });
+  });
 
   const status = (msg, cls = '') => { const el = $('#fld-status'); el.className = 'fld-status ' + cls; el.textContent = msg; };
 

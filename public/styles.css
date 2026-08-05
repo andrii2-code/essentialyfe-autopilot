@@ -514,10 +514,19 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
 .theme-toggle span:first-child{font-size:13px;line-height:1}
 
 /* ---- his editable fields, inside the property detail card ---- */
-.fld-group{margin:14px 0 6px}
-.fld-group-t{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
 .fld-lock{font-size:10px;letter-spacing:.02em;text-transform:none;color:var(--gold-d);font-weight:500}
 .fld-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px 14px}
+/* Sections as tabs. Ten groups stacked vertically meant scrolling past sixty fields
+   to reach one value; this keeps every section one click from the top. The row wraps
+   rather than scrolling sideways, so no tab is ever hidden off the edge. */
+.fld-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 12px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.fld-tab{background:transparent;border:1px solid var(--line);border-radius:999px;padding:6px 13px;
+  font-size:12px;font-family:inherit;font-weight:500;color:var(--muted);cursor:pointer;
+  white-space:nowrap;transition:background .15s,color .15s,border-color .15s}
+.fld-tab:hover{color:var(--heading);border-color:var(--muted)}
+.fld-tab.on{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:600}
+.fld-lock-s{font-size:10px}
+.fld-pane-note{font-size:11px;color:var(--gold-d);margin-bottom:9px}
 .fld{display:flex;flex-direction:column;gap:4px}
 .fld-l{font-size:12px;color:var(--muted)}
 .fld-input{font:inherit;font-size:13px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}

@@ -1863,10 +1863,16 @@ function showAuth(needsSetup = false) {
       <div class="auth-brand">EssentiaLyfe</div>
       <div class="auth-title">${needsSetup ? 'Create your owner account' : 'Sign in'}</div>
       <div class="auth-err" id="auth-err"></div>
-      ${needsSetup ? '<input id="auth-name" class="auth-input" placeholder="Your name" autocomplete="name">' : ''}
-      <input id="auth-email" class="auth-input" type="email" placeholder="Email" autocomplete="username">
-      <input id="auth-pass" class="auth-input" type="password" placeholder="Password" autocomplete="${needsSetup ? 'new-password' : 'current-password'}">
-      <button id="auth-submit" class="auth-btn">${needsSetup ? 'Create account' : 'Sign in'}</button>
+      <!-- A real <form> with a submit button, because that is what a password manager
+           looks for. Keeper and the browsers' own managers find a login by the form
+           around it; three loose inputs and a div-button are invisible to them, so
+           nothing offered to fill and nothing offered to save. -->
+      <form id="auth-form" method="post" action="/api/auth/login" autocomplete="on">
+        ${needsSetup ? '<input id="auth-name" name="name" class="auth-input" placeholder="Your name" autocomplete="name">' : ''}
+        <input id="auth-email" name="username" class="auth-input" type="email" placeholder="Email" autocomplete="username">
+        <input id="auth-pass" name="password" class="auth-input" type="password" placeholder="Password" autocomplete="${needsSetup ? 'new-password' : 'current-password'}">
+        <button id="auth-submit" class="auth-btn" type="submit">${needsSetup ? 'Create account' : 'Sign in'}</button>
+      </form>
       ${needsSetup ? '' : '<a class="auth-link" id="auth-forgot">Forgot password?</a>'}
     </div>`;
   document.body.appendChild(wrap);
@@ -1888,8 +1894,10 @@ function showAuth(needsSetup = false) {
       await startApp();
     } catch (e) { err(e.message); $('#auth-submit').disabled = false; }
   };
-  $('#auth-submit').onclick = submit;
-  wrap.querySelectorAll('.auth-input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); }));
+  // Submit through the form, not the button: a password manager that fills the fields
+  // and presses Enter goes through here, and so does the browser's own "save this
+  // password?" prompt, which only fires on a real form submission.
+  $('#auth-form').addEventListener('submit', e => { e.preventDefault(); submit(); });
   $('#auth-email').focus();
 }
 

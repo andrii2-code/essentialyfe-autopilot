@@ -364,14 +364,17 @@ async function renderDatabase({ refetch = true } = {}) {
 // question he actually asked — "what is it pulling from?". Leaving them available but
 // hidden meant the app knew Compass listed a property and never showed him.
 const DEFAULT_COLUMNS = ['property_name', 'street_line', 'area', 'price', 'tier', 'beds', 'sqft',
-  'source', 'brokerage', 'status'];
+  'source', 'brokerage', 'status', 'created_at'];
 let COLUMN_CATALOGUE = [];
 
 // Columns added to DEFAULT_COLUMNS after he had already picked his own set. His choice
 // is stored in localStorage, so without this he would never see them — the app would
 // know which brokerage listed a property and quietly keep it to itself. Added once
 // each, and only if he has not since removed them by hand.
-const NEW_DEFAULTS = ['source', 'brokerage'];
+// created_at was a column he could switch on but never saw, which is why "date and
+// time of property added" read as missing: the data was there and the table did not
+// show it.
+const NEW_DEFAULTS = ['source', 'brokerage', 'created_at'];
 
 // Fields he has switched off. Held on the account rather than in this browser, so the
 // same form appears for his whole team. Nothing is deleted: the column keeps its data
@@ -385,6 +388,15 @@ Object.defineProperty(window, 'HIDDEN_FIELDS', {
 });
 
 // One row of the property card, omitted entirely when its field is switched off.
+// Date AND time, in his own locale. A whole import lands on one date, so the date
+// alone would not tell two batches apart.
+function whenAdded(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (isNaN(d)) return '—';
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function dtRow(key, label, value) {
   if (isHidden(key)) return '';
   return `<div class="dt-field"><span class="k">${esc(label)}</span><span class="v">${value}</span></div>`;
@@ -1065,6 +1077,9 @@ function openDetail(l) {
           <div class="dt-field"><span class="k">Where it came from</span><span class="v">${esc(l.source || '—')}</span></div>
           <div class="dt-field"><span class="k">Brokerage</span><span class="v">${esc(l.brokerage || '—')}</span></div>
           <div class="dt-field"><span class="k">MLS #</span><span class="v">${esc(l.mls_id || '—')}</span></div>
+          <!-- When this property entered the database. He asked for the date AND the
+               time, so a batch imported in one sitting can be told apart by when. -->
+          <div class="dt-field"><span class="k">Added</span><span class="v">${esc(whenAdded(l.created_at))}</span></div>
           <!-- source_url is where WE fetched the record; listing_url is the link from
                his own spreadsheet, which is usually Zillow. Preferring his link made
                the table say "Realtor" while this row opened Zillow. Show the source

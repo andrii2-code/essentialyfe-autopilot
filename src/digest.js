@@ -15,7 +15,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function appUrl() {
-  return (process.env.APP_URL || 'https://www.essentialyfehub1.com').replace(/\/$/, '');
+  return (process.env.APP_URL || 'https://www.essentialyfehub.com').replace(/\/$/, '');
 }
 
 // Plain-text part — also what gets logged when no sender is configured.

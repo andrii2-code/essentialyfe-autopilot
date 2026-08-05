@@ -2,7 +2,7 @@
 //
 // Two delivery routes, tried in this order:
 //   1. Resend  — set RESEND_API_KEY. Sends over HTTPS from a domain verified in
-//      Resend (essentialyfehub1.com), so SPF/DKIM pass and the mail is far less
+//      Resend (essentialyfehub.com), so SPF/DKIM pass and the mail is far less
 //      likely to be filtered than a personal mailbox would be.
 //   2. SMTP    — set SMTP_HOST/SMTP_USER/SMTP_PASS (587 STARTTLS or 465 TLS).
 //      Dependency-free client below; kept as a fallback and for hosts without
@@ -27,7 +27,7 @@ function mailMode() {
 // a display name — e.g. `EssentiaLyfe <noreply@…>` — so strip it down here; the
 // envelope must never include the display name.
 function fromAddress() {
-  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@essentialyfehub1.com';
+  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@essentialyfehub.com';
   const m = raw.match(/<([^>]+)>/);
   return (m ? m[1] : raw).trim();
 }
@@ -35,7 +35,7 @@ function fromAddress() {
 // What the recipient sees in the From line. MAIL_FROM_NAME shows the product name
 // instead of a bare address, so an inbox lists "EssentiaLyfe".
 function fromHeader() {
-  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@essentialyfehub1.com';
+  const raw = process.env.MAIL_FROM || process.env.SMTP_USER || 'noreply@essentialyfehub.com';
   if (/</.test(raw)) return raw.trim(); // already "Name <addr>"
   const name = process.env.MAIL_FROM_NAME;
   return name ? `${name} <${fromAddress()}>` : fromAddress();

@@ -151,10 +151,8 @@ async function refreshSummary() {
   $('#s-sourced').textContent = c.sourced;                 // every home held
   $('#s-review').textContent = c.in_review;                // waiting on his yes/no
   $('#s-processing').textContent = c.processing;
-  // 'live' is folded into the Drive count. Publishing to the website is not part of
-  // this build, so a tile for it only ever showed a zero and implied work that was
-  // never in scope.
   $('#s-ready').textContent = c.ready + c.live;            // delivered to Drive
+  $('#s-live').textContent = c.live;                       // published to the site
   $('#badge-review').textContent = c.in_review;
   $('#badge-processing').textContent = c.processing;
   $('#badge-db').textContent = c.sourced; // the database page lists every property
@@ -174,12 +172,12 @@ async function renderDashboard() {
   await refreshSummary();
   const queue = await api('/queue');
   state.queue = queue;
-  // queue preview (top 5)
+  // queue preview (top 7)
   const wrap = $('#queue-preview');
   if (!queue.length) {
     wrap.innerHTML = `<div class="muted" style="padding:20px;text-align:center">Queue is empty. Run the collector to pull today's LA listings.</div>`;
   } else {
-    wrap.innerHTML = queue.slice(0, 5).map(l => `
+    wrap.innerHTML = queue.slice(0, 7).map(l => `
       <div class="qp-card" data-id="${l.id}">
         <img class="qp-thumb" src="${imgFor(l)}" loading="lazy" alt="">
         <div class="qp-body">

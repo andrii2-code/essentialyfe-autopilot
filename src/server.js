@@ -5,6 +5,7 @@ const { q, init, importListings } = require('./db');
 const importer = require('./import');
 const enrichPhotos = require('./photo-enrich');
 const drivePhotos = require('./drive-photos');
+const photoJob = require('./photo-job');
 const { runCollector, processApproved } = require('./pipeline');
 const { driveMode, fetchDriveFile } = require('./drive');
 const auth = require('./auth');
@@ -663,87 +664,30 @@ app.post('/api/import/commit', auth.requireAdmin, wrap(async (req, res) => {
   const r = await importListings(held.rows);
   await q.newRun(held.rows.length, r.inserted, `import: ${r.inserted} added, ${r.updated} updated from ${held.filename || 'spreadsheet'}`);
 
-  // Fetch the real photos straight away rather than leaving it as a second button he
-  // has to know about. His sheet links a folder, not the pictures, so an import that
-  // stops here shows library stand-ins — which is what he saw. Bounded, because a
-  // 6,789-row import would otherwise spend a month of credits in one request; the
-  // rest are picked up by the "Fetch photos" control or the nightly pass.
-  // HIS OWN Drive folders first, then the address lookup for whatever is left.
-  // Every row of his sheet links a folder (29 of 29 in his test export, against 26 of
-  // 29 that resolve by address), and those are his own photographs rather than the
-  // listing agent's — better coverage and better pictures. The API lookup stays for
-  // folders that are empty, unshared, or not Drive links.
+  // Photos start fetching on their own. His sheet links a folder rather than the
+  // pictures, so an import that stopped here left stand-ins — which is what he saw,
+  // and why there used to be a separate "Fetch photos" button. Doing it inline instead
+  // would hold this request open past any sensible timeout on a 6,789-row file, so the
+  // job runs in the background and the import panel polls it. No button, no row cap.
   let photos = null;
   try {
-    const rows = await q.withoutPhotos();
-    const cap = Math.max(0, Math.min(Number(process.env.IMPORT_PHOTO_LIMIT) || 60, rows.length));
-    if (cap) {
-      const fromDrive = await drivePhotos.backfill(rows, { limit: cap });
-      for (const u of fromDrive.updates) await q.setPhotos(u.id, u.photos, null);
-      await q.markFolderDenied(fromDrive.denied);
-
-      let viaApi = { updates: [], used: 0, streetViewOnly: 0, notFound: 0 };
-      if (process.env.REALTYAPI_KEY) {
-        const stillEmpty = await q.withoutPhotos();
-        const left = Math.max(0, cap - fromDrive.withPhotos);
-        if (left && stillEmpty.length) {
-          viaApi = await enrichPhotos.backfill(stillEmpty, { limit: left });
-          for (const u of viaApi.updates) await q.setPhotos(u.id, u.photos, u.propertyUrl);
-        }
-      }
-      const done = fromDrive.withPhotos + viaApi.updates.length;
-      photos = {
-        checked: rows.length,
-        updated: done,
-        fromDrive: fromDrive.withPhotos,
-        fromListing: viaApi.updates.length,
-        folderDenied: fromDrive.denied.length,
-        noneAvailable: Math.max(0, Math.min(cap, rows.length) - done),
-        remaining: Math.max(0, rows.length - cap),
-      };
-    }
-  } catch (e) { console.error('[import] photo backfill:', e.message); }
+    photos = photoJob.start(q);
+  } catch (e) { console.error('[import] photo job:', e.message); }
   res.json({ ...r, photos });
 }));
 
 // ---- photos for imported properties (admin only) ----
-// His sheet links a photo FOLDER per property, never individual images, so imported
-// rows arrive with nothing for the gallery to draw. Every row does carry an address,
-// and that is enough to look the real listing photos up. Kept separate from the import
-// itself because it spends API credits per property — he decides how many.
+// Progress for the background job the import starts. The panel polls this so he can
+// watch the pictures arrive instead of pressing a button and waiting on a spinner.
+app.get('/api/import/photos', auth.requireAuth, wrap(async (req, res) => {
+  res.json(photoJob.status() || { running: false, total: 0, done: 0 });
+}));
+
+// A manual re-run, kept for the case his folders were unshared during the import and
+// he has since fixed the sharing. It starts the same job rather than a second code
+// path, and does nothing if one is already running.
 app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
-  const limit = Math.max(1, Math.min(500, Number(req.body?.limit) || 25));
-  const rows = await q.withoutPhotos();
-
-  // Same order as the import: his own Drive folders, then the listing lookup. Drive
-  // failing must not abort the whole request — the listing lookup below can still
-  // fill these properties, which is the point of having two sources.
-  let fromDrive = { updates: [], withPhotos: 0 };
-  try {
-    fromDrive = await drivePhotos.backfill(rows, { limit });
-    for (const u of fromDrive.updates) await q.setPhotos(u.id, u.photos, null);
-    await q.markFolderDenied(fromDrive.denied);
-  } catch (e) { console.error('[photos] drive:', e.message); }
-
-  let viaApi = { updates: [], used: 0 };
-  if (process.env.REALTYAPI_KEY) {
-    const stillEmpty = await q.withoutPhotos();
-    const left = Math.max(0, limit - fromDrive.withPhotos);
-    if (left && stillEmpty.length) {
-      viaApi = await enrichPhotos.backfill(stillEmpty, { limit: left });
-      for (const u of viaApi.updates) await q.setPhotos(u.id, u.photos, u.propertyUrl);
-    }
-  }
-  const done = fromDrive.withPhotos + viaApi.updates.length;
-  res.json({
-    checked: Math.min(limit, rows.length),
-    updated: done,
-    fromDrive: fromDrive.withPhotos,
-    fromListing: viaApi.updates.length,
-    folderDenied: fromDrive.denied.length,
-    noneAvailable: Math.max(0, Math.min(limit, rows.length) - done),
-    remaining: Math.max(0, rows.length - limit),
-  });
+  res.json(photoJob.start(q) || { running: false, total: 0, done: 0 });
 }));
 
 // ---- reset (admin only) ----

@@ -133,6 +133,9 @@ async function renderSettings() {
     $('#view-settings').innerHTML = `<div class="panel"><p class="lede">Settings are available to admins.</p></div>`;
     return;
   }
+  // Pick a job up again if one is still running — reloading the page or walking away
+  // from settings must not lose sight of it.
+  api('/import/photos').then(j => { if (j?.total) { photoJobMsg(j); if (j.running) watchPhotoJob(); else $('#imp-photos')?.classList.remove('hidden'); } }).catch(() => {});
   return renderAutomation().catch(e => console.error('automation:', e.message));
 }
 document.addEventListener('click', e => {
@@ -1535,30 +1538,75 @@ $('#btn-reset')?.addEventListener('click', async () => {
   btn.disabled = false;
 });
 
-// Photos for imported properties. Reports what it found in his terms — how many now
-// have pictures, and how many the data source simply has none for — because a bare
-// "25 checked" would not tell him whether it worked.
+// Photos for imported properties. The import starts this on its own now, so there is
+// no button to press — this only follows the job and says what it found. Reported in
+// his terms: how many have pictures, where they came from, and how many the sources
+// simply have none for, because a bare "25 checked" never told him whether it worked.
+let photoPoll = null;
+
+function photoJobMsg(j) {
+  const el = $('#imp-photos-msg');
+  if (!el) return;
+  const bits = [];
+  if (j.running) {
+    bits.push(`Fetching photos… ${j.done} of ${j.total}`);
+    if (j.withPhotos) bits.push(`${j.withPhotos} found so far`);
+    el.className = 'digest-msg';
+  } else {
+    bits.push(`${j.withPhotos} of ${j.total} now have their real photos`);
+    const where = [j.fromDrive ? `${j.fromDrive} from your Drive folders` : null,
+                   j.fromListing ? `${j.fromListing} from the listing data` : null].filter(Boolean);
+    if (where.length) bits.push(where.join(', '));
+    // Name the sharing problem separately: it is the one cause he can actually fix.
+    if (j.folderDenied) bits.push(`${j.folderDenied} folder${j.folderDenied === 1 ? '' : 's'} not shared with this app`);
+    const none = Math.max(0, j.noneAvailable - (j.folderDenied || 0));
+    if (none) bits.push(`${none} had none available`);
+    el.className = 'digest-msg ok';
+  }
+  el.textContent = bits.join(' · ');
+  const fill = $('#imp-photos-fill');
+  if (fill) fill.style.width = `${j.total ? Math.round((j.done / j.total) * 100) : 0}%`;
+  // Offered only once the job is done, and only when something is still missing —
+  // the case that matters is a folder he has since shared.
+  const again = $('#btn-imp-photos');
+  if (again) again.classList.toggle('hidden', j.running || !(j.total - j.withPhotos));
+}
+
+// Polls until the job reports it has stopped. Refreshes the table on the way so the
+// pictures appear as they arrive rather than all at the end.
+function watchPhotoJob() {
+  const panel = $('#imp-photos');
+  if (!panel) return;
+  panel.classList.remove('hidden');
+  clearInterval(photoPoll);
+  photoPoll = setInterval(async () => {
+    try {
+      const j = await api('/import/photos');
+      if (!j || !j.total) {
+        if (j && !j.running) { clearInterval(photoPoll); photoPoll = null; }
+        return;
+      }
+      photoJobMsg(j);
+      if (!j.running) {
+        clearInterval(photoPoll); photoPoll = null;
+        await renderDatabase();
+      }
+    } catch { clearInterval(photoPoll); photoPoll = null; }
+  }, 2000);
+}
+
+// Kept only for folders that were unshared while the import ran. It restarts the same
+// job rather than a different one, so there is a single path for fetching photos.
 $('#btn-imp-photos')?.addEventListener('click', async () => {
-  const msg = (t, cls = '') => { const el = $('#imp-photos-msg'); el.className = 'digest-msg ' + cls; el.textContent = t; };
   const btn = $('#btn-imp-photos');
-  const limit = +($('#imp-photos-n')?.value || 25);
   btn.disabled = true;
-  msg(`Looking up ${limit} properties… this takes a moment.`);
   try {
-    const r = await apiSend('POST', '/import/photos', { limit });
-    if (!r.checked) {
-      msg('Every property already has photos.', 'ok');
-    } else {
-      const bits = [`${r.updated} of ${r.checked} now have their real photos`];
-      const where = [r.fromDrive ? `${r.fromDrive} from your Drive folders` : null,
-                     r.fromListing ? `${r.fromListing} from the listing data` : null].filter(Boolean);
-      if (where.length) bits.push(where.join(', '));
-      if (r.noneAvailable) bits.push(`${r.noneAvailable} had none available`);
-      if (r.remaining) bits.push(`${r.remaining} still to do`);
-      msg(bits.join(' · '), 'ok');
-      await renderDatabase();
-    }
-  } catch (e) { msg(e.message, 'err'); }
+    await apiSend('POST', '/import/photos', {});
+    watchPhotoJob();
+  } catch (e) {
+    const el = $('#imp-photos-msg');
+    if (el) { el.className = 'digest-msg err'; el.textContent = e.message; }
+  }
   btn.disabled = false;
 });
 
@@ -2048,26 +2096,14 @@ function renderImportPreview(d) {
     try {
       const r = await apiSend('POST', '/import/commit', { token: importToken });
       $('#imp-progress').className = 'fld-status ok';
-      // Say what happened to the photos too — an import that silently left them as
-      // stand-ins looked like the feature had simply not worked.
-      // Name both sources: his own Drive folders come first and are his photographs,
-      // the listing lookup fills whatever is left. Seeing the split tells him at a
-      // glance whether his folders are readable by the app.
-      const p = r.photos;
-      const photoNote = p
-        ? ` · photos for ${p.updated} of ${p.checked}`
-          + (p.fromDrive || p.fromListing
-              ? ` (${[p.fromDrive ? `${p.fromDrive} from your Drive` : null,
-                      p.fromListing ? `${p.fromListing} from the listing` : null]
-                    .filter(Boolean).join(', ')})` : '')
-          + (p.folderDenied ? ` · ${p.folderDenied} folder${p.folderDenied === 1 ? '' : 's'} not shared with this app` : '')
-          + (p.noneAvailable > (p.folderDenied || 0)
-              ? ` · ${p.noneAvailable - (p.folderDenied || 0)} had none` : '')
-          + (p.remaining ? ` · ${p.remaining.toLocaleString()} still to fetch below` : '')
-        : '';
+      // Photos are fetched by the import itself now. It keeps running after this
+      // response, so the note points him at the progress rather than a final count —
+      // an import that silently left stand-ins looked like the feature never worked.
+      const photoNote = r.photos ? ' · fetching their photos now' : '';
       $('#imp-progress').textContent =
         `${r.inserted.toLocaleString()} added, ${r.updated.toLocaleString()} updated` +
         (r.failed ? `, ${r.failed} could not be read` : '') + photoNote;
+      if (r.photos) watchPhotoJob();
 
       // Say WHICH ones failed and why. The reasons were already being collected and
       // then dropped into the console, so a partial import looked like an unexplained

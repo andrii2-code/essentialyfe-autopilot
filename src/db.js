@@ -285,6 +285,64 @@ const q = {
     const { rows } = await pool.query(`SELECT * FROM listings ORDER BY price DESC NULLS LAST`);
     return rows.map(rowToApi);
   },
+
+  // One page of the property table, filtered and sorted in SQL.
+  //
+  // The page used to fetch every property and slice it in the browser. With his 6,735
+  // rows, each carrying up to 50 photo URLs and 50 cleaned-image records, that is about
+  // 139 MB over the wire before a single row is drawn. That is the multi-second wait he
+  // reported. Filtering and paging here means one page is roughly 37 KB.
+  //
+  // Sort keys are whitelisted rather than interpolated, so a crafted `sort` cannot
+  // reach the SQL.
+  async page({ limit = 50, offset = 0, q = '', status = '', area = '', tier = '', spec = '', sort = 'price:desc' } = {}) {
+    const SORTABLE = {
+      price: 'price', created_at: 'created_at', street_line: 'street_line',
+      sqft: 'sqft', status: 'status', beds: 'beds', tier: 'tier', area: 'area',
+    };
+    const [rawKey, rawDir] = String(sort).split(':');
+    const col = SORTABLE[rawKey] || 'price';
+    const dir = rawDir === 'asc' ? 'ASC' : 'DESC';
+
+    const where = [], vals = [];
+    const add = (sql, v) => { vals.push(v); where.push(sql.replace('$?', `$${vals.length}`)); };
+
+    if (status) {
+      // Comma-separated, so the processing page can ask for approved and processing
+      // together instead of downloading everything and filtering in the browser.
+      const list = String(status).split(',').map(s => s.trim()).filter(Boolean);
+      if (list.length) add('status = ANY($?::text[])', list);
+    }
+    // Area falls back to city, the same rule the filter dropdown is built from.
+    if (area) add('COALESCE(NULLIF(area, \'\'), city) = $?', area);
+    if (tier === '__none') where.push("(tier IS NULL OR tier = '')");
+    else if (tier) add('tier::text = $?', String(tier));
+    if (spec) add('spec = $?', spec);
+    if (q) add(
+      "(COALESCE(street_line,'') || ' ' || COALESCE(address,'') || ' ' || " +
+      "COALESCE(area,'') || ' ' || COALESCE(city,'') || ' ' || COALESCE(property_name,'')) ILIKE $?",
+      `%${q}%`);
+
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const { rows: cnt } = await pool.query(`SELECT COUNT(*)::int n FROM listings ${clause}`, vals);
+    const total = cnt[0]?.n || 0;
+
+    // limit 0 means "everything that matches" — the CSV export needs that, and it is
+    // still far cheaper than before because the heavy columns are dropped upstream.
+    const lim = Number(limit) > 0 ? `LIMIT ${Number(limit)} OFFSET ${Number(offset) || 0}` : '';
+    const { rows } = await pool.query(
+      `SELECT * FROM listings ${clause} ORDER BY ${col} ${dir} NULLS LAST, id ${dir} ${lim}`, vals);
+    return { rows: rows.map(rowToApi), total };
+  },
+
+  // The values behind the Area dropdown. Built from his data rather than a fixed list,
+  // and read on its own so the filter no longer needs every property in the browser.
+  async areas() {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT COALESCE(NULLIF(area, ''), city) AS a FROM listings
+        WHERE COALESCE(NULLIF(area, ''), city) IS NOT NULL ORDER BY 1`);
+    return rows.map(r => r.a).filter(Boolean);
+  },
   async setStatus(id, status, extra = {}) {
     const sets = ['status=$1']; const vals = [status];
     let i = 2;

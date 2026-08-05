@@ -49,6 +49,12 @@ function firstTag(l) {
 // keyed by id so it stays stable per card. Accepts a listing object or a bare id.
 function imgFor(listing, i = 0) {
   if (listing && typeof listing === 'object') {
+    // Table rows arrive without their galleries — the server sends one ready-made
+    // thumbnail instead, which is what took the database page from 139 MB to 37 KB.
+    // The detail view still receives the full record, so it falls through below.
+    if (listing.thumb !== undefined && !listing.images && !listing.photoUrls) {
+      return listing.thumb || PLACEHOLDER;
+    }
     // Prefer the CLEANED photo — watermark removed, address blurred, tagged. The raw
     // listing URL still carries the MLS logo, so showing it here meant everything he
     // looked at or downloaded in the app was the un-processed original.
@@ -282,7 +288,8 @@ async function swipe(id, action) {
 // ---------- processing ----------
 async function renderProcessing() {
   await refreshSummary();
-  const rows = (await api('/listings')).filter(l => ['approved', 'processing'].includes(l.status));
+  // Asked for by status rather than downloading every property and filtering here.
+  const rows = (await api('/listings?status=approved,processing&limit=0')).rows || [];
   const body = $('#proc-body');
   if (!rows.length) { body.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:30px">Nothing processing. Approve a home in the review queue and it appears here, then moves to your database on its own.</td></tr>`; return; }
   body.innerHTML = rows.map(l => `
@@ -307,26 +314,58 @@ const dbPage = {
   },
   set perPage(v) { try { localStorage.setItem('esl-db-per-page', String(v)); } catch {} },
 };
-let dbRows = [];   // the full set; paging slices this rather than refetching
+let dbRows = [];    // the CURRENT PAGE only — the server does the filtering and paging
+let dbTotal = 0;    // how many properties match his filters, for the pager
+
+// Turn his filter and sort choices into the query the server answers.
+function dbQuery(extra = {}) {
+  const f = dbFilters.get();
+  const p = new URLSearchParams();
+  if (f.q) p.set('q', f.q);
+  if (f.status) p.set('status', f.status);
+  if (f.area) p.set('area', f.area);
+  if (f.tier) p.set('tier', f.tier);
+  if (f.spec) p.set('spec', f.spec);
+  p.set('sort', f.sort || 'price:desc');
+  for (const [k, v] of Object.entries(extra)) p.set(k, v);
+  return p.toString();
+}
 
 async function renderDatabase({ refetch = true } = {}) {
   const body = $('#db-body');
   if (!body.children.length) body.innerHTML = `<tr><td colspan="${visibleColumns().length + 2}" class="muted" style="padding:18px">Loading…</td></tr>`;
   await loadColumnCatalogue();   // the table is drawn from his chosen columns
-  if (refetch) {
-    await refreshSummary();
-    // Every property he has, not just the approved ones. Showing only 'ready' meant the
-    // database page listed 2 rows out of 60-odd, so the field editing he asked for looked
-    // like it wasn't there — the fields live on the property, whatever its status.
-    dbRows = await api('/listings');
-  }
-  populateAreaFilter(dbRows);
+
+  const per = dbPage.perPage;
+  const sel = $('#db-per-page');
+  if (sel) sel.value = String(per);   // reflect the remembered choice
+  // "All" still goes through the server; it just asks for everything that matches.
+  const size = per === 'all' ? 0 : per;
+  if (dbPage.index < 0) dbPage.index = 0;
+
+  // Always refetch: the page, the filters and the sort are all resolved server-side
+  // now, so there is nothing left in the browser to re-slice. `refetch` still controls
+  // whether the header counts are refreshed, which is the expensive part.
+  if (refetch) await refreshSummary();
+  syncFilterControls();
+  const r = await api('/listings?' + dbQuery({
+    limit: size, offset: size ? dbPage.index * size : 0,
+  }));
+  dbRows = r.rows || [];
+  dbTotal = r.total || 0;
+
+  // A page index past the end (after a filter change, or a smaller result set) would
+  // show an empty table over a non-zero total. Step back and ask again.
+  const pages = Math.max(1, size ? Math.ceil(dbTotal / size) : 1);
+  if (dbTotal && dbPage.index >= pages) { dbPage.index = pages - 1; return renderDatabase({ refetch: false }); }
+
+  populateAreaFilter();
   await populateTierFilter();
-  const all = applyFiltersAndSort(dbRows);
-  if (!all.length) {
+
+  if (!dbRows.length) {
     // Distinguish "you have none" from "your filters matched none" — otherwise a
     // forgotten filter looks like lost data.
-    body.innerHTML = dbRows.length
+    body.innerHTML = anyFilterActive()
       ? `<tr><td colspan="${visibleColumns().length + 2}" class="muted" style="text-align:center;padding:30px">No properties match these filters. <a class="link" id="db-clear-inline">Clear them</a></td></tr>`
       : `<tr><td colspan="${visibleColumns().length + 2}" class="muted" style="text-align:center;padding:30px">No properties yet. Run the collector to pull today's listings.</td></tr>`;
     $('#db-clear-inline')?.addEventListener('click', clearDbFilters);
@@ -334,16 +373,9 @@ async function renderDatabase({ refetch = true } = {}) {
     return;
   }
 
-  const per = dbPage.perPage;
-  const sel = $('#db-per-page');
-  if (sel) sel.value = String(per);   // reflect the remembered choice
-  const size = per === 'all' ? all.length : per;
-  const pages = Math.max(1, Math.ceil(all.length / size));
-  if (dbPage.index >= pages) dbPage.index = pages - 1;   // e.g. after switching to a bigger page size
-  if (dbPage.index < 0) dbPage.index = 0;
-  const start = dbPage.index * size;
-  const rows = all.slice(start, start + size);
-  updatePager(all.length, start, rows.length, pages);
+  const start = size ? dbPage.index * size : 0;
+  const rows = dbRows;
+  updatePager(dbTotal, start, rows.length, pages);
 
   renderHead();
   const cols = visibleColumns();
@@ -353,6 +385,9 @@ async function renderDatabase({ refetch = true } = {}) {
       ${cols.map(c => `<td${cellClass(c)}>${cellHtml(l, c)}</td>`).join('')}
       <td><button class="row-edit" data-edit="${l.id}">Edit fields</button></td>
     </tr>`).join('');
+  // After the rows exist, so the widths are real. A column switched on or off changes
+  // whether there is anything to scroll at all.
+  syncHScroll();
 }
 
 // ---------- columns ----------
@@ -756,18 +791,30 @@ async function populateTierFilter() {
     + `<option value="__none">No tier set</option>`;
 }
 
-// The area list comes from his actual data, not a hardcoded list.
-function populateAreaFilter(rows) {
+// The area list comes from his actual data, not a hardcoded list. It has its own
+// endpoint now: the page only holds one page of properties, so the areas can no longer
+// be read off the rows in the browser.
+async function populateAreaFilter() {
   const sel = $('#db-f-area');
   if (!sel || sel.options.length > 1) return;   // build once
-  const areas = [...new Set(rows.map(r => r.area || r.city).filter(Boolean))].sort();
+  let areas = [];
+  try { areas = await api('/listings/areas'); } catch {}
   sel.insertAdjacentHTML('beforeend',
     areas.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join(''));
+  syncFilterControls();   // his stored choice may only now exist as an option
 }
 
-function applyFiltersAndSort(rows) {
+// Which filters are switched on. The server does the filtering now, so this is only
+// needed to tell "you have no properties" apart from "your filters matched none".
+function anyFilterActive() {
   const f = dbFilters.get();
-  // reflect the stored values in the controls
+  return !!(f.q || f.status || f.area || f.tier || f.spec);
+}
+
+// Put his stored choices back into the controls, and show the Clear button only when
+// something is actually filtering.
+function syncFilterControls() {
+  const f = dbFilters.get();
   const search = $('#db-search'), status = $('#db-f-status'), area = $('#db-f-area'),
         tier = $('#db-f-tier'), spec = $('#db-f-spec'), sort = $('#db-sort');
   if (search && document.activeElement !== search) search.value = f.q || '';
@@ -776,50 +823,7 @@ function applyFiltersAndSort(rows) {
   if (tier) tier.value = f.tier || '';
   if (spec) spec.value = f.spec || '';
   if (sort) sort.value = f.sort || 'price:desc';
-
-  const q = (f.q || '').toLowerCase().trim();
-  let out = rows.filter(r => {
-    if (f.status && r.status !== f.status) return false;
-    if (f.area && (r.area || r.city) !== f.area) return false;
-    // Tier is stored as text but compared loosely: an imported "5" and a typed 5 are
-    // the same grade, and String() on both sides is what makes them match.
-    if (f.tier === '__none') { if (r.tier) return false; }
-    else if (f.tier && String(r.tier ?? '') !== String(f.tier)) return false;
-    if (f.spec && r.spec !== f.spec) return false;
-    if (q) {
-      const hay = `${r.street_line || ''} ${r.address || ''} ${r.area || ''} ${r.city || ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-
-  const [key, dir] = (f.sort || 'price:desc').split(':');
-  const sign = dir === 'asc' ? 1 : -1;
-  // Nulls always sort last, whichever direction — an unpriced property at the top of a
-  // "highest price" list would be nonsense.
-  // Sort on what the column actually DISPLAYS. The address cell falls back to the full
-  // address when street_line is empty, so sorting the raw street_line put those rows in
-  // a position that didn't match what he could see.
-  const valueOf = (r) => key === 'street_line' ? (r.street_line || r.address)
-    : key === 'area' ? (r.area || r.city)
-    : r[key];
-
-  out = out.slice().sort((a, b) => {
-    const av = valueOf(a), bv = valueOf(b);
-    const aNull = av == null || av === '', bNull = bv == null || bv === '';
-    if (aNull && bNull) return 0;
-    if (aNull) return 1;
-    if (bNull) return -1;
-    if (typeof av === 'number' || typeof bv === 'number' || /^\d+$/.test(String(av))) {
-      return (Number(av) - Number(bv)) * sign;
-    }
-    return String(av).localeCompare(String(bv)) * sign;
-  });
-
-  // Show the "clear" button only when something is actually filtering.
-  const active = !!(f.q || f.status || f.area || f.tier || f.spec);
-  $('#db-clear')?.classList.toggle('hidden', !active);
-  return out;   // renderHead() paints the sort arrow on the right header
+  $('#db-clear')?.classList.toggle('hidden', !anyFilterActive());
 }
 
 function clearDbFilters() {
@@ -887,6 +891,35 @@ function scrollTableTop() {
   $('#view-database')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
+// Keep the pinned sideways scrollbar and the table in step. The table's own scrollbar
+// is at the foot of all its rows and so never on screen; this one sits at the bottom
+// of the window, which is what he was looking for and could not find.
+function syncHScroll() {
+  const wrap = $('#db-table-wrap'), bar = $('#db-hscroll'), inner = $('#db-hscroll-inner');
+  if (!wrap || !bar || !inner) return;
+  const over = wrap.scrollWidth - wrap.clientWidth;
+  // Nothing to scroll means no bar. A dead control is worse than none.
+  bar.classList.toggle('hidden', over <= 1);
+  if (over <= 1) return;
+  inner.style.width = wrap.scrollWidth + 'px';
+  bar.scrollLeft = wrap.scrollLeft;
+
+  if (bar.dataset.wired) return;
+  bar.dataset.wired = '1';
+  // Guarded against each other, or setting one would fire the other's handler and the
+  // two would fight while he drags.
+  let lock = false;
+  bar.addEventListener('scroll', () => {
+    if (lock) return;
+    lock = true; wrap.scrollLeft = bar.scrollLeft; lock = false;
+  });
+  wrap.addEventListener('scroll', () => {
+    if (lock) return;
+    lock = true; bar.scrollLeft = wrap.scrollLeft; lock = false;
+  });
+  window.addEventListener('resize', syncHScroll);
+}
+
 // The status values are internal; show him words instead.
 // Every status the app actually writes. `imported` was missing, so his own properties
 // showed a raw lowercase "imported" pill and could not be filtered for at all — and
@@ -905,8 +938,9 @@ function specLabel(s) {
 
 $('#btn-csv')?.addEventListener('click', async () => {
   // Export exactly what the table is showing him — every page of it, with his filters
-  // and sort applied, rather than the raw unfiltered set.
-  const rows = dbRows.length ? applyFiltersAndSort(dbRows) : await api('/listings');
+  // and sort applied, rather than the raw unfiltered set. limit=0 asks the server for
+  // every match, since the browser now only holds the page he is looking at.
+  const rows = (await api('/listings?' + dbQuery({ limit: 0 }))).rows || [];
   // Feed/AI columns first, then his own fields — restricted ones only if he may see
   // them (the API already omits those values otherwise, so this keeps headers honest).
   const defs = await loadFieldDefs();

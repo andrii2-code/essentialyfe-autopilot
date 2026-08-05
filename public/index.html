@@ -309,6 +309,10 @@
       </div>
 
       <div class="table-wrap" id="db-table-wrap"><table class="tbl" id="db-table"><thead><tr id="db-head"></tr></thead><tbody id="db-body"></tbody></table></div>
+      <!-- The table's own scrollbar sits at the very bottom of every row, which is far
+           below the fold, so he could not see anything to drag. This one is pinned to
+           the bottom of the window and drives the table sideways from wherever he is. -->
+      <div class="hscroll hidden" id="db-hscroll"><div id="db-hscroll-inner"></div></div>
 
       <!-- Pagination. Matters more once his own 7,000-property sheet is imported. -->
       <div class="pager" id="db-pager">

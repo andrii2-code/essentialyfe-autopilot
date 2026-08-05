@@ -175,6 +175,20 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
    The wrapper scrolls the page rather than an inner box (overflow-y:visible), which
    is what lets position:sticky work against the window instead of a clipped div. */
 #db-table-wrap{overflow-y:visible;border-radius:14px}
+/* A sideways scrollbar he can actually reach. The table's own one is at the foot of
+   all its rows, thousands of pixels below the fold, so there was nothing on screen to
+   drag: "i dont see a scale on the bottom to swipe to the right". This is pinned to
+   the bottom of the window and scrolls the table from wherever he happens to be.
+   It is shown only when the table really is wider than the panel. */
+.hscroll{position:sticky;bottom:0;z-index:5;overflow-x:auto;overflow-y:hidden;height:16px;
+  background:var(--panel);border-top:1px solid var(--line);border-radius:0 0 14px 14px}
+.hscroll>div{height:1px}
+/* Always drawn, never the thin overlay bar that fades out. He has to see the handle. */
+.hscroll::-webkit-scrollbar{height:12px}
+.hscroll::-webkit-scrollbar-track{background:var(--panel2);border-radius:6px}
+.hscroll::-webkit-scrollbar-thumb{background:#b9c2d0;border-radius:6px;border:2px solid var(--panel2)}
+.hscroll::-webkit-scrollbar-thumb:hover{background:#96a2b4}
+.hscroll{scrollbar-width:auto;scrollbar-color:#b9c2d0 var(--panel2)}
 #db-table-wrap .tbl thead th{position:sticky;top:0;z-index:3}
 /* col 1 = photo, col 2 = property name. Both pinned; the name carries the shadow
    that shows the rest of the table has slid underneath it. */

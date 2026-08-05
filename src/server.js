@@ -265,14 +265,50 @@ app.get('/api/summary', auth.requireAuth, wrap(async (req, res) => {
 app.get('/api/queue', auth.requireAuth, wrap(async (req, res) => res.json(await q.queue())));
 
 // ---- listings by spec / all / ready / one ----
+// The table needs one thumbnail per row, not the whole gallery. Same rule the browser
+// used: the cleaned image if we have one, else the first real listing photo, else
+// nothing (the client draws its own placeholder).
+function thumbFor(r) {
+  const images = Array.isArray(r.images) ? r.images : [];
+  const i = images.findIndex(im => im && im.driveFileId);
+  if (i >= 0) return `/api/listing/${r.id}/image/${i}`;
+  const photos = Array.isArray(r.photoUrls) ? r.photoUrls : [];
+  const first = photos.find(p => p && (typeof p === 'string' ? p : p.url));
+  return first ? (typeof first === 'string' ? first : first.url) : null;
+}
+
+// Drop the arrays that make a row heavy. A property carries up to 50 photo URLs and 50
+// cleaned-image records; at 6,735 rows that is ~139 MB, which is the multi-second wait
+// he reported on the database page. The detail view fetches /api/listing/:id and still
+// gets everything.
+function forList(r) {
+  const { photoUrls, images, photo_urls, photoPositions, photo_positions, ...rest } = r;
+  return {
+    ...rest,
+    thumb: thumbFor(r),
+    photoCount: (Array.isArray(images) ? images.length : 0)
+      || (Array.isArray(photoUrls) ? photoUrls.length : 0),
+  };
+}
+
 app.get('/api/listings', auth.requireAuth, wrap(async (req, res) => {
-  const { spec, status } = req.query;
-  let rows = await q.all();
-  if (spec) rows = rows.filter(r => r.spec === spec);
-  if (status) rows = rows.filter(r => r.status === status);
+  const { spec, status, area, tier, sort } = req.query;
+  const search = req.query.q || '';
+  // limit=0 means every match — the CSV export needs that. Anything else is capped so a
+  // stray value cannot ask for the whole table again.
+  const raw = req.query.limit;
+  const limit = raw === '0' ? 0 : Math.min(Number(raw) || 50, 500);
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+
+  const { rows, total } = await q.page({ limit, offset, q: search, status, area, tier, spec, sort });
   const canSee = canViewSensitive(req.user);
   const customDefs = await q.listCustomFields();
-  res.json(rows.map(r => redactAll(r, canSee, customDefs)));
+  res.json({ rows: rows.map(r => forList(redactAll(r, canSee, customDefs))), total });
+}));
+
+// The Area dropdown, read on its own so the filter no longer needs every property.
+app.get('/api/listings/areas', auth.requireAuth, wrap(async (req, res) => {
+  res.json(await q.areas());
 }));
 app.get('/api/ready', auth.requireAuth, wrap(async (req, res) => res.json(await q.ready())));
 

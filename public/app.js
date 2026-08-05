@@ -75,8 +75,23 @@ function imgFor(listing, i = 0) {
 
 let state = { summary: null, queue: [], swipeIdx: 0, user: null };
 
+// Every read gives up after 20 seconds. A request that never answers used to leave the
+// page sitting on "Loading…" with nothing to click and no way to tell a slow network
+// from a broken one. Failing is recoverable; hanging is not.
+const API_TIMEOUT = 20000;
+
 async function api(path, opts) {
-  const r = await fetch('/api' + path, opts ? { method: opts.method || 'GET', headers: { 'Content-Type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined } : undefined);
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), API_TIMEOUT);
+  let r;
+  try {
+    r = await fetch('/api' + path, opts
+      ? { method: opts.method || 'GET', headers: { 'Content-Type': 'application/json' },
+          body: opts.body ? JSON.stringify(opts.body) : undefined, signal: ctl.signal }
+      : { signal: ctl.signal });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'The server did not answer in time.' : e.message);
+  } finally { clearTimeout(timer); }
   if (r.status === 401) { showAuth(); throw new Error('not authenticated'); }
   if (!r.ok) throw new Error(await r.text());
   return r.json();
@@ -331,26 +346,48 @@ function dbQuery(extra = {}) {
   return p.toString();
 }
 
+// Renders are numbered so a slow one cannot overwrite a newer one. Changing a filter
+// twice quickly fires two fetches, and without this the one that happens to return
+// last wins — which shows him the wrong rows, or an empty table over a real total.
+let dbRenderSeq = 0;
+
 async function renderDatabase({ refetch = true } = {}) {
+  const seq = ++dbRenderSeq;
   const body = $('#db-body');
   if (!body.children.length) body.innerHTML = `<tr><td colspan="${visibleColumns().length + 2}" class="muted" style="padding:18px">Loading…</td></tr>`;
-  await loadColumnCatalogue();   // the table is drawn from his chosen columns
-
   const per = dbPage.perPage;
   const sel = $('#db-per-page');
   if (sel) sel.value = String(per);   // reflect the remembered choice
   // "All" still goes through the server; it just asks for everything that matches.
   const size = per === 'all' ? 0 : per;
   if (dbPage.index < 0) dbPage.index = 0;
-
-  // Always refetch: the page, the filters and the sort are all resolved server-side
-  // now, so there is nothing left in the browser to re-slice. `refetch` still controls
-  // whether the header counts are refreshed, which is the expensive part.
-  if (refetch) await refreshSummary();
   syncFilterControls();
-  const r = await api('/listings?' + dbQuery({
-    limit: size, offset: size ? dbPage.index * size : 0,
-  }));
+
+  // All at once, not one after another. These five calls do not depend on each other,
+  // and awaiting them in turn meant the page waited for five round trips to the server
+  // and the database back to back. That is the rest of the wait he reported, after the
+  // payload itself was dealt with.
+  // The header counts and the two filter lists must not be able to take the table down
+  // with them: a hiccup on any of those used to leave the page sitting on "Loading…"
+  // forever with nothing to explain it.
+  let r;
+  try {
+    [, r] = await Promise.all([
+      loadColumnCatalogue(),               // the table is drawn from his chosen columns
+      api('/listings?' + dbQuery({ limit: size, offset: size ? dbPage.index * size : 0 })),
+      refetch ? refreshSummary().catch(() => {}) : null,
+      populateAreaFilter().catch(() => {}),
+      populateTierFilter().catch(() => {}),
+    ]);
+  } catch (e) {
+    if (seq !== dbRenderSeq) return;       // a newer render is already on its way
+    body.innerHTML = `<tr><td colspan="${visibleColumns().length + 2}" class="muted" style="text-align:center;padding:30px">Could not load your properties. <a class="link" id="db-retry">Try again</a></td></tr>`;
+    $('#db-retry')?.addEventListener('click', () => renderDatabase());
+    return;
+  }
+  // A newer render started while this one was in flight. Drop this result rather than
+  // painting it over the fresher one.
+  if (seq !== dbRenderSeq) return;
   dbRows = r.rows || [];
   dbTotal = r.total || 0;
 
@@ -358,9 +395,6 @@ async function renderDatabase({ refetch = true } = {}) {
   // show an empty table over a non-zero total. Step back and ask again.
   const pages = Math.max(1, size ? Math.ceil(dbTotal / size) : 1);
   if (dbTotal && dbPage.index >= pages) { dbPage.index = pages - 1; return renderDatabase({ refetch: false }); }
-
-  populateAreaFilter();
-  await populateTierFilter();
 
   if (!dbRows.length) {
     // Distinguish "you have none" from "your filters matched none" — otherwise a
@@ -980,8 +1014,16 @@ document.addEventListener('click', async e => {
   if (!row) return;
   if (e.target.closest('.act') || e.target.closest('a')) return;
   const id = row.dataset.id;
-  const l = await api('/listing/' + id);
-  openDetail(l);
+  // Say something when it fails. A row that silently does nothing when clicked reads
+  // as the app being broken, and there was no message and no way to retry.
+  row.classList.add('row-loading');
+  try {
+    openDetail(await api('/listing/' + id));
+  } catch (err) {
+    alert(`Could not open this property.\n\n${err.message}`);
+  } finally {
+    row.classList.remove('row-loading');
+  }
 });
 function openDetail(l) {
   const palette = (l.color_palette || []).map(c => `<span style="background:${esc(c)}"></span>`).join('');
@@ -1309,9 +1351,14 @@ let FIELD_DEFS = null;
 async function loadFieldDefs() {
   if (FIELD_DEFS) return FIELD_DEFS;
   try {
-    FIELD_DEFS = await api('/fields');
+    // Both at once: the custom fields do not depend on the built-in ones, and asking
+    // one after the other put another round trip in front of the property table.
+    const [defs, custom] = await Promise.all([
+      api('/fields'),
+      api('/custom-fields').catch(() => []),
+    ]);
+    FIELD_DEFS = defs;
     // Fields he created himself are editable on the property too, in their own group.
-    const custom = await api('/custom-fields').catch(() => []);
     if (custom.length) {
       FIELD_DEFS = {
         ...FIELD_DEFS,

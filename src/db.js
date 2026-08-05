@@ -173,6 +173,19 @@ function init() {
       ALTER TABLE listings ADD COLUMN IF NOT EXISTS photo_retry BOOLEAN DEFAULT false;
       ALTER TABLE listings ADD COLUMN IF NOT EXISTS photo_checked_at TIMESTAMPTZ;
     `);
+
+    // The property table sorts and filters on these. Without them every page he turns
+    // sorts all 6,700-odd rows from scratch, and every filter reads the whole table.
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS listings_price_idx      ON listings (price DESC NULLS LAST, id DESC);
+      CREATE INDEX IF NOT EXISTS listings_created_idx    ON listings (created_at DESC NULLS LAST, id DESC);
+      CREATE INDEX IF NOT EXISTS listings_status_idx     ON listings (status);
+      CREATE INDEX IF NOT EXISTS listings_spec_idx       ON listings (spec);
+      CREATE INDEX IF NOT EXISTS listings_tier_idx       ON listings (tier);
+      CREATE INDEX IF NOT EXISTS listings_area_idx       ON listings (COALESCE(NULLIF(area, ''), city));
+      CREATE INDEX IF NOT EXISTS listings_street_idx     ON listings (street_line);
+      CREATE INDEX IF NOT EXISTS listings_sqft_idx       ON listings (sqft DESC NULLS LAST);
+    `);
   })();
   return readyPromise;
 }
@@ -324,15 +337,17 @@ const q = {
       `%${q}%`);
 
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const { rows: cnt } = await pool.query(`SELECT COUNT(*)::int n FROM listings ${clause}`, vals);
-    const total = cnt[0]?.n || 0;
-
     // limit 0 means "everything that matches" — the CSV export needs that, and it is
     // still far cheaper than before because the heavy columns are dropped upstream.
     const lim = Number(limit) > 0 ? `LIMIT ${Number(limit)} OFFSET ${Number(offset) || 0}` : '';
-    const { rows } = await pool.query(
-      `SELECT * FROM listings ${clause} ORDER BY ${col} ${dir} NULLS LAST, id ${dir} ${lim}`, vals);
-    return { rows: rows.map(rowToApi), total };
+
+    // Counted and fetched together rather than one after the other. They are
+    // independent, and the round trip to the database is the expensive part.
+    const [cnt, page] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int n FROM listings ${clause}`, vals),
+      pool.query(`SELECT * FROM listings ${clause} ORDER BY ${col} ${dir} NULLS LAST, id ${dir} ${lim}`, vals),
+    ]);
+    return { rows: page.rows.map(rowToApi), total: cnt.rows[0]?.n || 0 };
   },
 
   // The values behind the Area dropdown. Built from his data rather than a fixed list,

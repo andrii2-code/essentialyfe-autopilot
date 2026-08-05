@@ -175,6 +175,13 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
    The wrapper scrolls the page rather than an inner box (overflow-y:visible), which
    is what lets position:sticky work against the window instead of a clipped div. */
 #db-table-wrap{overflow-y:visible;border-radius:14px}
+/* The table still scrolls sideways, but its own scrollbar is hidden: it sits at the
+   foot of every row where he cannot reach it, and drawn under the pinned one below it
+   just looked like two bars stacked on top of each other. */
+/* While a property is being fetched, so a click has a visible effect straight away. */
+#db-table-wrap .tbl tr.row-loading{opacity:.55}
+#db-table-wrap{scrollbar-width:none;-ms-overflow-style:none}
+#db-table-wrap::-webkit-scrollbar{height:0;width:0;display:none}
 /* A sideways scrollbar he can actually reach. The table's own one is at the foot of
    all its rows, thousands of pixels below the fold, so there was nothing on screen to
    drag: "i dont see a scale on the bottom to swipe to the right". This is pinned to

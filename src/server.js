@@ -300,9 +300,13 @@ app.get('/api/listings', auth.requireAuth, wrap(async (req, res) => {
   const limit = raw === '0' ? 0 : Math.min(Number(raw) || 50, 500);
   const offset = Math.max(0, Number(req.query.offset) || 0);
 
-  const { rows, total } = await q.page({ limit, offset, q: search, status, area, tier, spec, sort });
+  // Together: the custom-field definitions do not depend on the page, and asking for
+  // them afterwards added another database round trip to every page he turns.
+  const [{ rows, total }, customDefs] = await Promise.all([
+    q.page({ limit, offset, q: search, status, area, tier, spec, sort }),
+    q.listCustomFields(),
+  ]);
   const canSee = canViewSensitive(req.user);
-  const customDefs = await q.listCustomFields();
   res.json({ rows: rows.map(r => forList(redactAll(r, canSee, customDefs))), total });
 }));
 

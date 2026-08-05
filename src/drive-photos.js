@@ -49,7 +49,17 @@ const IMAGE_MIME = /^image\/(jpe?g|png|webp|heic|heif)$/i;
 // backfill over thousands of properties must not stop at the first unshared folder.
 async function photosInFolder(url, { max = 80 } = {}) {
   const id = await resolveFolderId(url);
-  if (!id) return { photos: [], error: 'not a Drive folder link' };
+  if (!id) {
+    // A third of his sheet links Dropbox, not Drive, and those folders turned out to
+    // be deleted — the browser shows "This item was deleted". Naming that separately
+    // matters because it is the single biggest cause and it is not a Drive problem at
+    // all: nothing here can fix it, only the listing lookup can fill these.
+    if (/dropbox\.com/i.test(url || '')) {
+      return { photos: [], error: 'Dropbox folder (not readable)', reason: 'deleted_folder' };
+    }
+    if (!url) return { photos: [], error: 'no folder link', reason: 'no_folder_link' };
+    return { photos: [], error: 'not a Drive folder link', reason: 'not_a_folder_link' };
+  }
 
   // Defensive: if drive.js ever stops exporting this, every folder should report
   // "Drive is not connected" and fall through to the address lookup — not throw
@@ -68,7 +78,7 @@ async function photosInFolder(url, { max = 80 } = {}) {
       includeItemsFromAllDrives: true,
     });
     const files = (res.data.files || []).filter(f => IMAGE_MIME.test(f.mimeType || ''));
-    if (!files.length) return { photos: [], error: 'folder has no images' };
+    if (!files.length) return { photos: [], error: 'folder has no images', reason: 'empty_folder' };
 
     // Serve through our own endpoint rather than a Drive URL: Drive's direct links
     // require the viewer to be signed in and shared on the folder, so an <img> tag
@@ -92,6 +102,7 @@ async function photosInFolder(url, { max = 80 } = {}) {
     return {
       photos: [], denied,
       error: denied ? 'folder not shared with this account' : msg,
+      reason: denied ? 'folder_denied' : 'folder_unreadable',
     };
   }
 }
@@ -101,23 +112,35 @@ async function photosInFolder(url, { max = 80 } = {}) {
 async function backfill(rows, { limit = 50, onProgress = () => {} } = {}) {
   const updates = [];
   const denied = [];          // folders that exist but this account cannot open
+  // Why each row failed, so the caller can tell a deleted Dropbox folder from a
+  // property his sheet simply has no link for. One number covering both is what made
+  // 2,000 failures unreadable.
+  const failures = [];
   let used = 0, withPhotos = 0, noFolder = 0, unreadable = 0;
 
   for (const row of rows) {
     if (used >= limit) break;
     const folder = row.photos_url;
-    if (!folder) { noFolder++; continue; }
+    if (!folder) {
+      noFolder++;
+      failures.push({ id: row.id, reason: 'no_folder_link' });
+      continue;
+    }
 
     const r = await photosInFolder(folder);
     used++;
     if (r.photos.length) { withPhotos++; updates.push({ id: row.id, photos: r.photos }); }
-    else { unreadable++; if (r.denied) denied.push(row.id); }
+    else {
+      unreadable++;
+      if (r.denied) denied.push(row.id);
+      failures.push({ id: row.id, reason: r.reason || 'folder_unreadable' });
+    }
     onProgress({
       used, limit, found: r.photos.length, error: r.error, denied: !!r.denied,
       address: row.address || row.street_line || '',
     });
   }
-  return { updates, denied, used, withPhotos, noFolder, unreadable };
+  return { updates, denied, failures, used, withPhotos, noFolder, unreadable };
 }
 
 module.exports = { photosInFolder, folderIdFrom, backfill };

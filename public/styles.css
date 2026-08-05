@@ -285,6 +285,12 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background
    visible end rather than leaving him wondering whether anything is happening. */
 .imp-photos-bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:10px 0 8px}
 .imp-photos-fill{height:100%;width:0;border-radius:3px;background:var(--gold);transition:width .4s ease}
+/* The causes behind the failures, one line each. */
+.imp-why{margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--panel2)}
+.imp-why-t{font-size:12px;font-weight:600;color:var(--heading);margin-bottom:6px}
+.imp-why-row{display:flex;gap:10px;align-items:baseline;padding:5px 0;font-size:12px;line-height:1.45}
+.imp-why-row+.imp-why-row{border-top:1px solid var(--line)}
+.imp-why-n{min-width:52px;text-align:right;font-weight:600;color:var(--heading)}
 .warn{color:#b03a2e;font-weight:600}
 :root[data-theme="dark"] .warn{color:#e08b7f}
 .dt-gal .dt-status ~ .dt-gal-raw{top:46px}

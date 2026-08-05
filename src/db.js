@@ -157,6 +157,22 @@ function init() {
     await pool.query(`
       ALTER TABLE listings ADD COLUMN IF NOT EXISTS digest_sent_at TIMESTAMPTZ;
     `);
+
+    // WHY a property still has no gallery, and whether it is worth trying again.
+    // "None available" was one number covering several different causes — a deleted
+    // Dropbox folder, no link in his sheet, an address the listing data does not
+    // know, and a lookup that never ran because the API credits were spent. He can
+    // act on the first three and only the last is worth retrying automatically, so
+    // they cannot stay merged.
+    //   photo_fail_reason : deleted_folder | no_folder_link | folder_denied
+    //                       | not_a_folder_link | no_listing_photos | out_of_credits
+    //   photo_retry       : true when the reason is temporary (credits), so a later
+    //                       run with a paid key picks it up without a fresh import.
+    await pool.query(`
+      ALTER TABLE listings ADD COLUMN IF NOT EXISTS photo_fail_reason TEXT;
+      ALTER TABLE listings ADD COLUMN IF NOT EXISTS photo_retry BOOLEAN DEFAULT false;
+      ALTER TABLE listings ADD COLUMN IF NOT EXISTS photo_checked_at TIMESTAMPTZ;
+    `);
   })();
   return readyPromise;
 }
@@ -496,6 +512,43 @@ const q = {
     if (!ids?.length) return;
     await pool.query(
       `UPDATE listings SET photos_folder_denied = true WHERE id = ANY($1::bigint[])`, [ids]);
+  },
+
+  // Record why a property still has no gallery. `retry` marks the ones worth trying
+  // again on their own — running out of credits is the only cause that fixes itself
+  // once he buys the subscription.
+  async markPhotoFailure(ids, reason, retry = false) {
+    if (!ids?.length) return;
+    await pool.query(
+      `UPDATE listings
+          SET photo_fail_reason = $2, photo_retry = $3, photo_checked_at = now()
+        WHERE id = ANY($1::bigint[])`, [ids, reason, retry]);
+  },
+
+  // The queue for "try these again when the paid key is in". Deliberately keyed on
+  // photo_retry rather than on emptiness, so a property the sources genuinely have no
+  // photograph for is not looked up over and over at his expense.
+  async photoRetryQueue() {
+    const { rows } = await pool.query(`
+      SELECT id, address, street_line, city, state, zip, photo_urls, photos_url
+        FROM listings
+       WHERE photo_retry = true
+         AND (photo_urls IS NULL OR photo_urls = '' OR photo_urls = '[]')
+       ORDER BY (tier IS NULL), id`);
+    return rows;
+  },
+
+  // What the settings panel reports: one row per cause, so 2,000 "none available"
+  // becomes a list he can act on.
+  async photoFailureBreakdown() {
+    const { rows } = await pool.query(`
+      SELECT COALESCE(photo_fail_reason, 'unknown') AS reason,
+             COUNT(*)::int AS n,
+             SUM(CASE WHEN photo_retry THEN 1 ELSE 0 END)::int AS retryable
+        FROM listings
+       WHERE (photo_urls IS NULL OR photo_urls = '' OR photo_urls = '[]')
+       GROUP BY 1 ORDER BY 2 DESC`);
+    return rows;
   },
 
   async setPhotos(id, photos, propertyUrl = null) {

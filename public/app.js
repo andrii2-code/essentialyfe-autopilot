@@ -1544,6 +1544,35 @@ $('#btn-reset')?.addEventListener('click', async () => {
 // simply have none for, because a bare "25 checked" never told him whether it worked.
 let photoPoll = null;
 
+// One line per cause. "2,000 none available" told him nothing he could act on; the
+// causes underneath it are different problems with different answers, and only one of
+// them is fixed by buying API credits.
+const FAIL_REASONS = {
+  out_of_credits: ['Waiting on API credits', 'These were never looked up. Buy the subscription, then press the button below.'],
+  deleted_folder_no_listing: ['Photo folder deleted', 'The Dropbox folder in your sheet no longer exists, and the listing data has none either.'],
+  no_folder_link: ['No photo link in your sheet', 'Nothing to read. Add a folder link, or let the listing lookup try the address.'],
+  folder_denied: ['Folder not shared with this app', 'The folder exists but this app cannot open it. Share it and try again.'],
+  not_a_folder_link: ['Link is not a photo folder', 'The cell points somewhere this app cannot read.'],
+  empty_folder: ['Folder is empty', 'The folder opens but has no images in it.'],
+  no_listing_photos: ['No photos anywhere', 'Neither your folders nor the listing data have a photograph of this property.'],
+  folder_unreadable: ['Folder could not be read', 'The link is there but the folder would not open.'],
+  unknown: ['Not checked yet', 'These have not been through a photo run.'],
+};
+
+function renderPhotoBreakdown(j) {
+  const box = $('#imp-photos-why');
+  if (!box) return;
+  const rows = (j.breakdown || []).filter(r => r.n > 0);
+  if (!rows.length) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="imp-why-t">Why ${rows.reduce((n, r) => n + r.n, 0).toLocaleString()} properties still have no photos</div>`
+    + rows.map(r => {
+        const [label, help] = FAIL_REASONS[r.reason] || [r.reason, ''];
+        return `<div class="imp-why-row"><span class="imp-why-n">${r.n.toLocaleString()}</span>`
+          + `<span><b>${esc(label)}</b><br><span class="muted">${esc(help)}</span></span></div>`;
+      }).join('');
+}
+
 function photoJobMsg(j) {
   const el = $('#imp-photos-msg');
   if (!el) return;
@@ -1564,6 +1593,13 @@ function photoJobMsg(j) {
     const left = j.total - j.done;
     if (left > 0) bits.push(`${left.toLocaleString()} not checked yet`);
     el.className = 'digest-msg';
+  } else if (j.queuedForRetry) {
+    // The situation his file is in: the free key runs dry partway through, so most
+    // rows were never asked about. Saying "none available" for those was wrong — they
+    // are waiting on the subscription, not missing photographs.
+    bits.push(`${j.withPhotos.toLocaleString()} of ${j.total.toLocaleString()} have their real photos`);
+    bits.push(`${j.queuedForRetry.toLocaleString()} waiting on more API credits`);
+    el.className = 'digest-msg';
   } else {
     bits.push(`${j.withPhotos.toLocaleString()} of ${j.total.toLocaleString()} now have their real photos`);
     const where = [j.fromDrive ? `${j.fromDrive} from your Drive folders` : null,
@@ -1578,6 +1614,7 @@ function photoJobMsg(j) {
   el.textContent = bits.join(' · ');
   const fill = $('#imp-photos-fill');
   if (fill) fill.style.width = `${j.total ? Math.round((j.done / j.total) * 100) : 0}%`;
+  renderPhotoBreakdown(j);
   // Stop only while there is something to stop.
   const stopBtn = $('#btn-imp-photos-stop');
   if (stopBtn) {
@@ -1588,6 +1625,14 @@ function photoJobMsg(j) {
   // either he stopped it, or a folder was unshared and he has since fixed it.
   const again = $('#btn-imp-photos');
   if (again) again.classList.toggle('hidden', j.running || !(j.total - j.withPhotos));
+  // Its own button, because it is a different run: only the rows that were never
+  // looked up, so buying the subscription does not mean paying again for the
+  // properties already ruled out.
+  const retry = $('#btn-imp-photos-retry');
+  if (retry) {
+    retry.classList.toggle('hidden', j.running || !j.retryable);
+    if (j.retryable) retry.textContent = `⤓ Fetch the ${j.retryable.toLocaleString()} waiting on credits`;
+  }
 }
 
 // Polls until the job reports it has stopped. Refreshes the table on the way so the
@@ -1627,6 +1672,20 @@ $('#btn-imp-photos-stop')?.addEventListener('click', async () => {
     btn.disabled = false;
   }
   btn.textContent = '✕ Stop fetching';   // the poll hides it once the job reports it stopped
+});
+
+// The subscription run: only the rows the lookup never reached.
+$('#btn-imp-photos-retry')?.addEventListener('click', async () => {
+  const btn = $('#btn-imp-photos-retry');
+  btn.disabled = true;
+  try {
+    await apiSend('POST', '/import/photos', { retryOnly: true });
+    watchPhotoJob();
+  } catch (e) {
+    const el = $('#imp-photos-msg');
+    if (el) { el.className = 'digest-msg err'; el.textContent = e.message; }
+  }
+  btn.disabled = false;
 });
 
 // Kept only for folders that were unshared while the import ran. It restarts the same

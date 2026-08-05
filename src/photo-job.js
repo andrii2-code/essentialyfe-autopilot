@@ -48,33 +48,66 @@ async function runBatch(q, rows) {
     console.error('[photo-job] drive:', e.message);
   }
 
-  let viaApi = { updates: [] };
-  if (process.env.REALTYAPI_KEY) {
-    const doneIds = new Set(fromDrive.updates.map(u => u.id));
-    const left = rows.filter(r => !doneIds.has(r.id));
-    if (left.length) {
-      try {
-        viaApi = await enrichPhotos.backfill(left, { limit: left.length });
-        for (const u of viaApi.updates) await q.setPhotos(u.id, u.photos, u.propertyUrl);
-      } catch (e) { console.error('[photo-job] listing lookup:', e.message); }
-    }
+  const doneIds = new Set(fromDrive.updates.map(u => u.id));
+  let viaApi = { updates: [], unchecked: [], outOfCredits: false };
+  const left = rows.filter(r => !doneIds.has(r.id));
+
+  if (process.env.REALTYAPI_KEY && left.length) {
+    try {
+      viaApi = await enrichPhotos.backfill(left, { limit: left.length });
+      for (const u of viaApi.updates) {
+        await q.setPhotos(u.id, u.photos, u.propertyUrl);
+        doneIds.add(u.id);
+      }
+    } catch (e) { console.error('[photo-job] listing lookup:', e.message); }
   }
+
+  // Record WHY each remaining property has no gallery. Rows the lookup never got to
+  // ask about are the only ones marked for retry: buying the subscription fixes those
+  // and nothing else, so re-running must not re-ask about houses that genuinely have
+  // no photograph anywhere.
+  const unchecked = new Set(viaApi.unchecked || []);
+  // No key at all is the same situation as a spent one — the lookup never ran.
+  const noKey = !process.env.REALTYAPI_KEY;
+  const retryIds = [], byReason = new Map();
+  for (const row of left) {
+    if (doneIds.has(row.id)) continue;
+    if (noKey || unchecked.has(row.id)) { retryIds.push(row.id); continue; }
+    const reason = (fromDrive.failures || []).find(f => f.id === row.id)?.reason || 'no_listing_photos';
+    // Drive could not help AND the listing data had nothing: the honest reason is the
+    // second one, since the lookup is what actually decided it.
+    const final = reason === 'deleted_folder' ? 'deleted_folder_no_listing' : 'no_listing_photos';
+    if (!byReason.has(final)) byReason.set(final, []);
+    byReason.get(final).push(row.id);
+  }
+  try {
+    if (retryIds.length) await q.markPhotoFailure(retryIds, 'out_of_credits', true);
+    for (const [reason, ids] of byReason) await q.markPhotoFailure(ids, reason, false);
+  } catch (e) { console.error('[photo-job] recording reasons:', e.message); }
 
   return {
     fromDrive: fromDrive.withPhotos,
     fromListing: viaApi.updates.length,
     folderDenied: fromDrive.denied.length,
+    queuedForRetry: retryIds.length,
+    outOfCredits: !!viaApi.outOfCredits || noKey,
   };
 }
 
 // Fire and forget. Returns the initial state so the caller can report a count without
 // waiting for any of the work.
-function start(q, { onDone } = {}) {
+// `retryOnly` works the queue of rows that were never checked because the credits ran
+// out. That is the run to make once he buys the subscription: it skips the properties
+// already ruled out, so nothing is paid for twice.
+function start(q, { onDone, retryOnly = false } = {}) {
   if (isRunning()) return snapshot();
 
   job = {
     total: 0, done: 0, withPhotos: 0,
     fromDrive: 0, fromListing: 0, folderDenied: 0, noneAvailable: 0,
+    // Kept apart from noneAvailable: these are waiting on the subscription, not on
+    // photographs that do not exist.
+    queuedForRetry: 0, outOfCredits: false,
     error: null, stopped: false, startedAt: Date.now(),
     // Counting the rows is itself a query, so until it lands the job has total 0 and
     // would otherwise read as "already finished" to anyone polling.
@@ -83,7 +116,8 @@ function start(q, { onDone } = {}) {
 
   job.promise = (async () => {
     try {
-      const all = await q.withoutPhotos();
+      const all = retryOnly ? await q.photoRetryQueue() : await q.withoutPhotos();
+      job.retryOnly = retryOnly;
       job.total = all.length;
       job.counting = false;
       if (!all.length) return;
@@ -96,8 +130,12 @@ function start(q, { onDone } = {}) {
         job.fromDrive += r.fromDrive;
         job.fromListing += r.fromListing;
         job.folderDenied += r.folderDenied;
+        job.queuedForRetry += r.queuedForRetry;
+        if (r.outOfCredits) job.outOfCredits = true;
         job.withPhotos += got;
-        job.noneAvailable += batch.length - got;
+        // Only the ones actually ruled out. A row waiting on credits has not been
+        // checked, and counting it as "none available" is what made the number wrong.
+        job.noneAvailable += batch.length - got - r.queuedForRetry;
         job.done += batch.length;
       }
     } catch (e) {

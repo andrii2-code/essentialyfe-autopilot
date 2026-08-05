@@ -43,10 +43,22 @@ async function photosForAddress(address, { key = process.env.REALTYAPI_KEY } = {
     res = await fetch(`https://${HOST}/propimages?byaddress=${encodeURIComponent(address)}`,
       { headers: { 'x-realtyapi-key': key, accept: 'application/json' } });
   } catch { return empty; }
-  if (!res.ok) return { ...empty, creditsLeft: res.headers.get('x-credits-remaining') };
+  // 401/402/429 with the free tier exhausted is not "this house has no photograph" —
+  // it is "we never got to ask". Saying which is what lets the row be queued for a
+  // retry once the subscription is in, instead of being written off.
+  if (!res.ok) {
+    const creditsLeft = res.headers.get('x-credits-remaining');
+    const outOfCredits = res.status === 401 || res.status === 402 || res.status === 429
+      || String(creditsLeft) === '0';
+    return { ...empty, creditsLeft, outOfCredits };
+  }
 
   const body = await res.json().catch(() => null);
   const creditsLeft = res.headers.get('x-credits-remaining');
+  // An exhausted key answers 200 with nothing in it, which is indistinguishable from
+  // a real miss unless the credit header is read. Measured: both of the free keys
+  // reported 0 here while returning a clean 200.
+  if (String(creditsLeft) === '0') return { ...empty, creditsLeft, outOfCredits: true };
   if (!body) return { ...empty, creditsLeft };
 
   let urls = widestJpegs(body);
@@ -75,10 +87,16 @@ async function photosForAddress(address, { key = process.env.REALTYAPI_KEY } = {
 // long run is observable rather than silent.
 async function backfill(rows, { key = process.env.REALTYAPI_KEY, limit = 50, onProgress = () => {} } = {}) {
   const out = [];
-  let used = 0, withPhotos = 0, streetViewOnly = 0, notFound = 0;
+  // Rows the lookup never got to ask about, because the credits ran out mid-run. They
+  // are queued for a retry rather than recorded as having no photograph.
+  const unchecked = [];
+  let used = 0, withPhotos = 0, streetViewOnly = 0, notFound = 0, outOfCredits = false;
 
   for (const row of rows) {
     if (used >= limit) break;
+    // Once the key is spent, every further call costs a round trip and returns the
+    // same nothing. Queue the rest instead of asking 6,000 times.
+    if (outOfCredits) { unchecked.push(row.id); continue; }
     const already = Array.isArray(row.photo_urls) ? row.photo_urls.length
       : (typeof row.photo_urls === 'string' && row.photo_urls.length > 4);
     if (already) continue;
@@ -86,13 +104,20 @@ async function backfill(rows, { key = process.env.REALTYAPI_KEY, limit = 50, onP
     if (!address) continue;
 
     const r = await photosForAddress(address, { key });
+    if (r.outOfCredits) {
+      // This row was not answered either, so it belongs in the queue with the rest.
+      outOfCredits = true;
+      unchecked.push(row.id);
+      onProgress({ used, limit, address, found: 0, outOfCredits: true, creditsLeft: r.creditsLeft });
+      continue;
+    }
     used++;
     if (r.photos.length) { withPhotos++; out.push({ id: row.id, address, photos: r.photos, propertyUrl: r.propertyUrl }); }
     else if (r.streetViewOnly) streetViewOnly++;
     else notFound++;
     onProgress({ used, limit, address, found: r.photos.length, streetViewOnly: r.streetViewOnly, creditsLeft: r.creditsLeft });
   }
-  return { updates: out, used, withPhotos, streetViewOnly, notFound };
+  return { updates: out, used, withPhotos, streetViewOnly, notFound, outOfCredits, unchecked };
 }
 
 module.exports = { photosForAddress, backfill, widestJpegs, isStreetView };

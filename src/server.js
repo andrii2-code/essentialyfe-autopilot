@@ -680,14 +680,24 @@ app.post('/api/import/commit', auth.requireAdmin, wrap(async (req, res) => {
 // Progress for the background job the import starts. The panel polls this so he can
 // watch the pictures arrive instead of pressing a button and waiting on a spinner.
 app.get('/api/import/photos', auth.requireAuth, wrap(async (req, res) => {
-  res.json(photoJob.status() || { running: false, total: 0, done: 0 });
+  const job = photoJob.status() || { running: false, total: 0, done: 0 };
+  // The breakdown is what turns "2,000 none available" into causes he can act on:
+  // a deleted Dropbox folder, no link in his sheet, or a lookup that never ran.
+  let breakdown = [];
+  try { breakdown = await q.photoFailureBreakdown(); } catch {}
+  const retryable = breakdown.reduce((n, r) => n + (r.retryable || 0), 0);
+  res.json({ ...job, breakdown, retryable });
 }));
 
 // A manual re-run, kept for the case his folders were unshared during the import and
 // he has since fixed the sharing. It starts the same job rather than a second code
 // path, and does nothing if one is already running.
 app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
-  res.json(photoJob.start(q) || { running: false, total: 0, done: 0 });
+  // retryOnly is the run to make once the subscription is in: it works only the rows
+  // the lookup never got to ask about, so the ones already ruled out are not paid for
+  // a second time.
+  const retryOnly = req.body?.retryOnly === true;
+  res.json(photoJob.start(q, { retryOnly }) || { running: false, total: 0, done: 0 });
 }));
 
 // Stop a run in progress. Photos already fetched are kept, so starting again resumes

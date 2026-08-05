@@ -193,6 +193,9 @@
           <p class="lede" style="margin:4px 0 10px">Your spreadsheet links a folder per property rather than the pictures themselves, so imported homes come in without a gallery. Importing fetches them for you: it reads your own Drive folders first, and looks the address up in the listing data for anything it cannot open.</p>
           <div class="imp-photos-bar"><div class="imp-photos-fill" id="imp-photos-fill"></div></div>
           <div class="digest-msg" id="imp-photos-msg"></div>
+          <!-- One line per cause. A single "none available" number hid four different
+               problems, only one of which is fixed by buying API credits. -->
+          <div class="imp-why hidden" id="imp-photos-why"></div>
           <div class="auto-inline" style="margin-top:8px">
             <!-- A full file is thousands of properties, so stopping has to be possible
                  without waiting it out. Photos already fetched are kept. -->
@@ -200,6 +203,9 @@
             <!-- Restarts after a stop, and covers the case where his folders were
                  unshared during the import and he has since fixed the sharing. -->
             <button class="btn-ghost hidden" id="btn-imp-photos">↻ Try the missing ones again</button>
+            <!-- The run to make once the subscription is in. It works only the rows
+                 the lookup never got to, so nothing is paid for twice. -->
+            <button class="btn-ghost hidden" id="btn-imp-photos-retry">⤓ Fetch the ones waiting on credits</button>
           </div>
         </div>
       </div>

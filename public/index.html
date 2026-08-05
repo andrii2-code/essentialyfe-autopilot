@@ -233,6 +233,7 @@
         <input class="fld-input" id="db-search" type="search" placeholder="Search address or area…" style="max-width:260px">
         <select class="fld-input" id="db-f-status" style="width:auto">
           <option value="">All statuses</option>
+          <option value="imported">Yours</option>
           <option value="in_review">In review</option>
           <option value="approved">Approved</option>
           <option value="processing">Processing</option>
@@ -241,11 +242,15 @@
           <option value="passed">Passed</option>
         </select>
         <select class="fld-input" id="db-f-area" style="width:auto"><option value="">All areas</option></select>
-        <select class="fld-input" id="db-f-tier" style="width:auto">
-          <option value="">All tiers</option>
-          <option value="A">Tier A</option><option value="B">Tier B</option>
-          <option value="C">Tier C</option><option value="D">Tier D</option>
-          <option value="__none">No tier set</option>
+        <!-- Filled from the Tier field's own options, so it can never again disagree
+             with the values the app actually stores. -->
+        <select class="fld-input" id="db-f-tier" style="width:auto"></select>
+        <!-- For sale / Sold / For rent: the distinction he could not make at a glance. -->
+        <select class="fld-input" id="db-f-spec" style="width:auto">
+          <option value="">All listing types</option>
+          <option value="for-sale">For sale</option>
+          <option value="sold">Sold</option>
+          <option value="for-rent">For rent</option>
         </select>
         <select class="fld-input" id="db-sort" style="width:auto">
           <option value="price:desc">Price · high to low</option>

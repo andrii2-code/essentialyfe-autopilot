@@ -318,6 +318,7 @@ async function renderDatabase({ refetch = true } = {}) {
     dbRows = await api('/listings');
   }
   populateAreaFilter(dbRows);
+  await populateTierFilter();
   const all = applyFiltersAndSort(dbRows);
   if (!all.length) {
     // Distinguish "you have none" from "your filters matched none" — otherwise a
@@ -707,6 +708,31 @@ const dbFilters = {
   },
 };
 
+// Tier options come from the field definition, so the filter cannot drift away from
+// the values the app stores. It offered A-D long after Tier became 1-7, which meant
+// every choice in it matched nothing at all.
+async function populateTierFilter() {
+  const sel = $('#db-f-tier');
+  if (!sel) return;
+  let opts = [];
+  try {
+    const defs = await loadFieldDefs();
+    opts = (defs.fields.find(f => f.key === 'tier')?.options || []).filter(Boolean);
+  } catch {}
+  // Rebuild whenever the grades change rather than once at startup. Building once is
+  // what let A-D survive the move to 1-7 in the first place.
+  const sig = opts.join(',');
+  if (sel.dataset.sig === sig) return;
+  sel.dataset.sig = sig;
+  // Switching Tier off takes its filter away too, instead of leaving a dropdown that
+  // offers nothing to choose.
+  sel.classList.toggle('hidden', !opts.length);
+  if (!opts.length) { sel.innerHTML = ''; return; }
+  sel.innerHTML = `<option value="">All tiers</option>`
+    + opts.map(o => `<option value="${esc(o)}">Tier ${esc(o)}</option>`).join('')
+    + `<option value="__none">No tier set</option>`;
+}
+
 // The area list comes from his actual data, not a hardcoded list.
 function populateAreaFilter(rows) {
   const sel = $('#db-f-area');
@@ -720,19 +746,23 @@ function applyFiltersAndSort(rows) {
   const f = dbFilters.get();
   // reflect the stored values in the controls
   const search = $('#db-search'), status = $('#db-f-status'), area = $('#db-f-area'),
-        tier = $('#db-f-tier'), sort = $('#db-sort');
+        tier = $('#db-f-tier'), spec = $('#db-f-spec'), sort = $('#db-sort');
   if (search && document.activeElement !== search) search.value = f.q || '';
   if (status) status.value = f.status || '';
   if (area) area.value = f.area || '';
   if (tier) tier.value = f.tier || '';
+  if (spec) spec.value = f.spec || '';
   if (sort) sort.value = f.sort || 'price:desc';
 
   const q = (f.q || '').toLowerCase().trim();
   let out = rows.filter(r => {
     if (f.status && r.status !== f.status) return false;
     if (f.area && (r.area || r.city) !== f.area) return false;
+    // Tier is stored as text but compared loosely: an imported "5" and a typed 5 are
+    // the same grade, and String() on both sides is what makes them match.
     if (f.tier === '__none') { if (r.tier) return false; }
-    else if (f.tier && r.tier !== f.tier) return false;
+    else if (f.tier && String(r.tier ?? '') !== String(f.tier)) return false;
+    if (f.spec && r.spec !== f.spec) return false;
     if (q) {
       const hay = `${r.street_line || ''} ${r.address || ''} ${r.area || ''} ${r.city || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -764,7 +794,7 @@ function applyFiltersAndSort(rows) {
   });
 
   // Show the "clear" button only when something is actually filtering.
-  const active = !!(f.q || f.status || f.area || f.tier);
+  const active = !!(f.q || f.status || f.area || f.tier || f.spec);
   $('#db-clear')?.classList.toggle('hidden', !active);
   return out;   // renderHead() paints the sort arrow on the right header
 }
@@ -784,6 +814,7 @@ const onFilterChange = (patch) => {
 $('#db-f-status')?.addEventListener('change', e => onFilterChange({ status: e.target.value }));
 $('#db-f-area')?.addEventListener('change', e => onFilterChange({ area: e.target.value }));
 $('#db-f-tier')?.addEventListener('change', e => onFilterChange({ tier: e.target.value }));
+$('#db-f-spec')?.addEventListener('change', e => onFilterChange({ spec: e.target.value }));
 $('#db-sort')?.addEventListener('change', e => onFilterChange({ sort: e.target.value }));
 $('#db-clear')?.addEventListener('click', clearDbFilters);
 
@@ -834,9 +865,13 @@ function scrollTableTop() {
 }
 
 // The status values are internal; show him words instead.
+// Every status the app actually writes. `imported` was missing, so his own properties
+// showed a raw lowercase "imported" pill and could not be filtered for at all — and
+// after a full import they are the largest group in the database.
 function statusLabel(s) {
   return { in_review: 'In review', approved: 'Approved', processing: 'Processing',
-           ready: 'Ready', live: 'In Drive', passed: 'Passed' }[s] || s;
+           ready: 'Ready', live: 'In Drive', passed: 'Passed',
+           imported: 'Yours' }[s] || s;
 }
 
 // Which of his three searches a property came from. The raw values are hyphenated

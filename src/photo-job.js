@@ -105,8 +105,10 @@ function start(q, { onDone } = {}) {
       console.error('[photo-job]', e);
     } finally {
       // Make sure a finished job never reads as still running, whatever went wrong.
+      // A cancelled one keeps its real count: "stopped at 90 of 6,695" is the honest
+      // number, and rounding it up to the total would claim work it never did.
       if (job) job.counting = false;
-      if (job && !job.error) job.done = job.total;
+      if (job && !job.error && !job.stopped) job.done = job.total;
       if (onDone) { try { await onDone(snapshot()); } catch {} }
     }
   })();
@@ -116,6 +118,13 @@ function start(q, { onDone } = {}) {
 
 function status() { return snapshot(); }
 
-function stop() { if (job) job.stopped = true; }
+// Stopping is checked between batches, so the batch already in flight finishes and
+// its photos are kept. Cancelling must not throw away pictures it has already paid
+// for — he can start again and it picks up from whatever is still missing.
+function stop() {
+  if (!job) return null;
+  job.stopped = true;
+  return snapshot();
+}
 
 module.exports = { start, status, stop, isRunning, BATCH };

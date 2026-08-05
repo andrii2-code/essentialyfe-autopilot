@@ -1547,13 +1547,25 @@ let photoPoll = null;
 function photoJobMsg(j) {
   const el = $('#imp-photos-msg');
   if (!el) return;
+  // Reveal the panel here rather than only in the watcher: a restart writes progress
+  // through this function too, and a message in a hidden panel is a message he never
+  // sees.
+  $('#imp-photos')?.classList.remove('hidden');
   const bits = [];
   if (j.running) {
-    bits.push(`Fetching photos… ${j.done} of ${j.total}`);
-    if (j.withPhotos) bits.push(`${j.withPhotos} found so far`);
+    bits.push(`Fetching photos… ${j.done.toLocaleString()} of ${j.total.toLocaleString()}`);
+    if (j.withPhotos) bits.push(`${j.withPhotos.toLocaleString()} found so far`);
+    el.className = 'digest-msg';
+  } else if (j.stopped) {
+    // Say it stopped, and say the pictures were kept — otherwise cancelling looks
+    // like it threw away the work already done.
+    bits.push(`Stopped at ${j.done.toLocaleString()} of ${j.total.toLocaleString()}`);
+    bits.push(`${j.withPhotos.toLocaleString()} photo${j.withPhotos === 1 ? '' : ' sets'} kept`);
+    const left = j.total - j.done;
+    if (left > 0) bits.push(`${left.toLocaleString()} not checked yet`);
     el.className = 'digest-msg';
   } else {
-    bits.push(`${j.withPhotos} of ${j.total} now have their real photos`);
+    bits.push(`${j.withPhotos.toLocaleString()} of ${j.total.toLocaleString()} now have their real photos`);
     const where = [j.fromDrive ? `${j.fromDrive} from your Drive folders` : null,
                    j.fromListing ? `${j.fromListing} from the listing data` : null].filter(Boolean);
     if (where.length) bits.push(where.join(', '));
@@ -1566,8 +1578,14 @@ function photoJobMsg(j) {
   el.textContent = bits.join(' · ');
   const fill = $('#imp-photos-fill');
   if (fill) fill.style.width = `${j.total ? Math.round((j.done / j.total) * 100) : 0}%`;
+  // Stop only while there is something to stop.
+  const stopBtn = $('#btn-imp-photos-stop');
+  if (stopBtn) {
+    stopBtn.classList.toggle('hidden', !j.running);
+    if (j.running) stopBtn.disabled = false;
+  }
   // Offered only once the job is done, and only when something is still missing —
-  // the case that matters is a folder he has since shared.
+  // either he stopped it, or a folder was unshared and he has since fixed it.
   const again = $('#btn-imp-photos');
   if (again) again.classList.toggle('hidden', j.running || !(j.total - j.withPhotos));
 }
@@ -1594,6 +1612,22 @@ function watchPhotoJob() {
     } catch { clearInterval(photoPoll); photoPoll = null; }
   }, 2000);
 }
+
+// Stopping is checked between batches, so the one in flight finishes first. The button
+// says so rather than appearing to hang for the second or two that takes.
+$('#btn-imp-photos-stop')?.addEventListener('click', async () => {
+  const btn = $('#btn-imp-photos-stop');
+  btn.disabled = true;
+  btn.textContent = '✕ Stopping…';
+  try {
+    await apiSend('POST', '/import/photos/stop', {});
+  } catch (e) {
+    const el = $('#imp-photos-msg');
+    if (el) { el.className = 'digest-msg err'; el.textContent = e.message; }
+    btn.disabled = false;
+  }
+  btn.textContent = '✕ Stop fetching';   // the poll hides it once the job reports it stopped
+});
 
 // Kept only for folders that were unshared while the import ran. It restarts the same
 // job rather than a different one, so there is a single path for fetching photos.

@@ -690,6 +690,12 @@ app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
   res.json(photoJob.start(q) || { running: false, total: 0, done: 0 });
 }));
 
+// Stop a run in progress. Photos already fetched are kept, so starting again resumes
+// from what is still missing rather than from the beginning.
+app.post('/api/import/photos/stop', auth.requireAdmin, wrap(async (req, res) => {
+  res.json(photoJob.stop() || { running: false, total: 0, done: 0 });
+}));
+
 // ---- reset (admin only) ----
 app.post('/api/reset', auth.requireAdmin, wrap(async (req, res) => { await q.clearAll(); res.json({ ok: true }); }));
 

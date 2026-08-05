@@ -450,9 +450,17 @@ function cellHtml(l, c) {
 
   if (c.key === 'property_name') {
     const name = v || propertyFallbackName(l);
-    return l.drive_folder_url
-      ? `<a class="drive-link" href="${esc(l.drive_folder_url)}" target="_blank" title="Open this property's folder in Google Drive">📁 ${esc(name)}</a>`
-      : `<span title="The Drive folder is created when you approve the property">${esc(name)}</span>`;
+    // An imported property already has a folder — his own, listed in the spreadsheet —
+    // so it links exactly like an approved one. Only drive_folder_url was checked
+    // before, which is set when WE file the photos, so his own thousands of rows read
+    // as having no folder at all.
+    const own = /^https?:\/\//i.test(l.photos_url || '') ? l.photos_url : null;
+    const folder = l.drive_folder_url || own;
+    if (!folder) return `<span title="The Drive folder is created when you approve the property">${esc(name)}</span>`;
+    const title = l.drive_folder_url
+      ? "Open this property's folder in Google Drive"
+      : 'Open your own photo folder for this property';
+    return `<a class="drive-link" href="${esc(folder)}" target="_blank" rel="noopener" title="${title}">📁 ${esc(name)}</a>`;
   }
   if (c.key === 'status') return `<span class="pill ${esc(l.status)}">${esc(statusLabel(l.status))}</span>`;
   // For sale / Sold / For rent, colour-coded, because telling a rental from a sale at
@@ -1109,26 +1117,24 @@ function openDetail(l) {
       <div class="dt-section-t">Description</div>
       <p class="dt-desc">${esc(l.description || '—')}</p>`}
 
+      <!-- Skipped entirely for a property whose photos are his own: the bar above
+           already says they came from his folder and already links it, so this row
+           repeated both the sentence and the button. -->
+      ${fromHisDrive ? '' : `
       <div class="drive-row">
         <span class="dr-ic">📁</span>
         <div class="dr-text">
-          <b>${fromHisDrive
-            ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in your own folder`
-            : (l.images || []).length
-              ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in your Drive`
-              : 'Not in your Drive yet'}</b>
-          ${fromHisDrive
-            ? `<span class="dr-sub">Already cleaned and filed by you, so nothing to approve.</span>`
-            : (l.images || []).length
-              ? `<span class="dr-sub">${roomsCovered || 'Cleaned and filed by room.'}</span>`
-              : `<span class="dr-sub">Like this property and the photos are cleaned, tagged and filed here.</span>`}
+          <b>${(l.images || []).length
+            ? `${photoCount} photo${photoCount === 1 ? '' : 's'} in your Drive`
+            : 'Not in your Drive yet'}</b>
+          ${(l.images || []).length
+            ? `<span class="dr-sub">${roomsCovered || 'Cleaned and filed by room.'}</span>`
+            : `<span class="dr-sub">Like this property and the photos are cleaned, tagged and filed here.</span>`}
         </div>
-        ${fromHisDrive && l.photos_url
-          ? `<a class="dr-open" href="${esc(l.photos_url)}" target="_blank" rel="noopener">Open folder →</a>`
-          : l.drive_folder_url
-            ? `<a class="dr-open" href="${l.drive_folder_url}" target="_blank" title="${esc(drivePath)}">Open folder →</a>`
-            : (state.summary?.driveMode === 'live' ? '' : `<span class="dr-pending" title="Connecting the service account to your master folder makes this live — no code change.">Prepared, not yet uploaded</span>`)}
-      </div>
+        ${l.drive_folder_url
+          ? `<a class="dr-open" href="${l.drive_folder_url}" target="_blank" title="${esc(drivePath)}">Open folder →</a>`
+          : (state.summary?.driveMode === 'live' ? '' : `<span class="dr-pending" title="Connecting the service account to your master folder makes this live — no code change.">Prepared, not yet uploaded</span>`)}
+      </div>`}
 
       <div class="dt-section-t">Your fields <span class="muted" style="font-weight:400;font-size:12px">— editable, saved to this property</span></div>
       <div id="dt-editable"></div>

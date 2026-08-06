@@ -771,6 +771,12 @@ app.post('/api/listing/:id/calendars', auth.requireAuth, wrap(async (req, res) =
   const url = ical.normaliseUrl(req.body?.url);
   if (!url) return res.status(400).json({ error: 'That is not a calendar link. It should start with https:// or webcal://' });
 
+  // The listing page and the calendar feed come from the same site and look alike. He
+  // already has 223 public Airbnb and Vrbo pages under "Listed on", so say exactly
+  // which one this is rather than making him work it out from a generic refusal.
+  const mixup = ical.listingPageProblem(url);
+  if (mixup) return res.status(400).json({ error: mixup });
+
   // Read it BEFORE saving. A link that cannot be read is worth telling him about now,
   // while he still has the owner's email open, rather than silently storing a dead
   // feed that quietly blocks nothing.

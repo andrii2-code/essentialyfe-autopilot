@@ -153,6 +153,35 @@ function normaliseUrl(url) {
   return u;
 }
 
+// The listing PAGE is not the calendar FEED, and they are easy to mix up because both
+// come from the same site. 223 of his properties already carry a public Airbnb or Vrbo
+// page under "Listed on", so pasting one of those in here is the likeliest mistake.
+//
+// The page and the feed even share the listing id: airbnb.com/rooms/47715077 against
+// airbnb.com/calendar/ical/47715077.ics?s=SECRET. The secret cannot be guessed, so the
+// feed cannot be built from the page. All that can be done is to say precisely what
+// went wrong instead of "that does not look like a calendar".
+function listingPageProblem(url) {
+  const u = String(url || '');
+  if (/\/calendar\/ical\/|\.ics(\?|$)|icalendar/i.test(u)) return null;   // already a feed
+  if (/airbnb\.[a-z.]+\/rooms\//i.test(u)) {
+    return 'That is the Airbnb listing page, not the calendar link. In Airbnb go to '
+      + 'Calendar, pick the listing, then Availability, Connect calendars, Export calendar.';
+  }
+  if (/vrbo\.[a-z.]+|homeaway\./i.test(u)) {
+    return 'That is the Vrbo listing page, not the calendar link. In Vrbo go to '
+      + 'Calendar, pick the property, then Sync calendars or Export calendar.';
+  }
+  if (/giggster\.|peerspace\./i.test(u)) {
+    return 'That is the listing page, not a calendar link. Ask the owner for the '
+      + 'calendar export from wherever they manage their bookings.';
+  }
+  if (/zillow\.|redfin\.|realtor\.|compass\./i.test(u)) {
+    return 'That is a property listing page, not an availability calendar.';
+  }
+  return null;
+}
+
 async function fetchIcs(url) {
   const target = normaliseUrl(url);
   if (!target) return { events: [], error: 'That is not a calendar link.' };
@@ -224,5 +253,6 @@ function daysList(feedEvents, manual, window) {
 
 module.exports = {
   parseIcs, fetchIcs, normaliseUrl, classify, mergeDays, daysList, addDays, toDay,
+  listingPageProblem,
   FETCH_TIMEOUT,
 };

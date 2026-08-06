@@ -1360,7 +1360,7 @@ async function mountAvailability(listing) {
 
     host.innerHTML = `
       <div class="cal-feeds">
-        ${feeds || `<div class="muted" style="font-size:12px">No calendar linked yet. Paste an Airbnb, Vrbo, Google or Giggster link below and the booked dates will be blocked here.</div>`}
+        ${feeds || `<div class="muted" style="font-size:12px">No calendar linked yet. Airbnb, Vrbo, Google and Giggster all publish one. It is the owner's calendar export, a long address ending in .ics, and not the public listing page kept under "Listed on" below. Press "${ownerEmailAddress(listing) ? 'Email the owner' : 'Ask the owner'}" if you need to ask them for it.</div>`}
         <div class="cal-add">
           <input class="fld-input" id="cal-url" placeholder="https://www.airbnb.com/calendar/ical/… or webcal://…"
                  value="${!data.calendars?.length && /^https?:|^webcal:/i.test(listing.ical_url || '') ? esc(listing.ical_url) : ''}">

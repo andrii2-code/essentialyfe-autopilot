@@ -623,6 +623,26 @@ const q = {
     return rows;
   },
 
+  // Properties with nowhere for their photos to go. Deliberately excludes the ones
+  // whose photos already live in HIS own folder: those have a folder, it is just not
+  // one we made, and creating a second one beside it would only confuse him.
+  async withoutDriveFolder() {
+    const { rows } = await pool.query(`
+      SELECT id, street_line, address, city, property_name
+        FROM listings
+       WHERE (drive_folder_id IS NULL OR drive_folder_id = '')
+         AND (photos_url IS NULL OR photos_url NOT LIKE 'http%')
+         AND (street_line IS NOT NULL OR address IS NOT NULL)
+       ORDER BY (tier IS NULL), id`);
+    return rows;
+  },
+
+  async setDriveFolder(id, folderId, folderUrl) {
+    await pool.query(
+      `UPDATE listings SET drive_folder_id = $2, drive_folder_url = $3 WHERE id = $1`,
+      [id, folderId, folderUrl]);
+  },
+
   // ---- availability ----------------------------------------------------------
   // A date is stored as a DATE and read back as YYYY-MM-DD. Letting pg hand these
   // over as Date objects is how a booking that starts on the 3rd ends up showing as

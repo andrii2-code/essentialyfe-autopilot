@@ -22,14 +22,17 @@ let job = null;
 
 // The job is a singleton: two imports in a row must not run two passes over the same
 // rows and spend the credits twice.
+//
+// Running until the loop has actually exited, not until it was asked to stop. Pressing
+// Stop leaves the batch in flight, and reporting "stopped" while photos were still
+// being fetched meant the next run saw a half-written picture of what was done.
 function isRunning() {
-  if (!job || job.stopped || job.error) return false;
-  return job.counting || job.done < job.total;
+  return !!job && !job.finished;
 }
 
 function snapshot() {
   if (!job) return null;
-  const { startedAt, promise, counting, ...rest } = job;
+  const { startedAt, promise, counting, finished, ...rest } = job;
   return { ...rest, running: isRunning() };
 }
 
@@ -102,7 +105,11 @@ async function runBatch(q, rows) {
 function start(q, { onDone, retryOnly = false } = {}) {
   if (isRunning()) return snapshot();
 
-  job = {
+  // `me` rather than the module-level `job`. Stopping only takes effect between
+  // batches, so a stopped run is still finishing its current batch when the next one
+  // starts, and writing to `job` meant the old loop kept incrementing the NEW run's
+  // counters and re-reading properties it had already done.
+  const me = {
     total: 0, done: 0, withPhotos: 0,
     fromDrive: 0, fromListing: 0, folderDenied: 0, noneAvailable: 0,
     // Kept apart from noneAvailable: these are waiting on the subscription, not on
@@ -111,43 +118,46 @@ function start(q, { onDone, retryOnly = false } = {}) {
     error: null, stopped: false, startedAt: Date.now(),
     // Counting the rows is itself a query, so until it lands the job has total 0 and
     // would otherwise read as "already finished" to anyone polling.
-    counting: true,
+    counting: true, finished: false,
   };
+  job = me;
 
-  job.promise = (async () => {
+  me.promise = (async () => {
     try {
       const all = retryOnly ? await q.photoRetryQueue() : await q.withoutPhotos();
-      job.retryOnly = retryOnly;
-      job.total = all.length;
-      job.counting = false;
+      if (job !== me) return;                  // superseded while counting
+      me.retryOnly = retryOnly;
+      me.total = all.length;
+      me.counting = false;
       if (!all.length) return;
 
       for (let i = 0; i < all.length; i += BATCH) {
-        if (job.stopped) break;
+        if (me.stopped || job !== me) break;
         const batch = all.slice(i, i + BATCH);
         const r = await runBatch(q, batch);
+        if (job !== me) return;                // a newer run owns the counters now
         const got = r.fromDrive + r.fromListing;
-        job.fromDrive += r.fromDrive;
-        job.fromListing += r.fromListing;
-        job.folderDenied += r.folderDenied;
-        job.queuedForRetry += r.queuedForRetry;
-        if (r.outOfCredits) job.outOfCredits = true;
-        job.withPhotos += got;
+        me.fromDrive += r.fromDrive;
+        me.fromListing += r.fromListing;
+        me.folderDenied += r.folderDenied;
+        me.queuedForRetry += r.queuedForRetry;
+        if (r.outOfCredits) me.outOfCredits = true;
+        me.withPhotos += got;
         // Only the ones actually ruled out. A row waiting on credits has not been
         // checked, and counting it as "none available" is what made the number wrong.
-        job.noneAvailable += batch.length - got - r.queuedForRetry;
-        job.done += batch.length;
+        me.noneAvailable += batch.length - got - r.queuedForRetry;
+        me.done += batch.length;
       }
     } catch (e) {
-      job.error = e.message;
+      me.error = e.message;
       console.error('[photo-job]', e);
     } finally {
-      // Make sure a finished job never reads as still running, whatever went wrong.
-      // A cancelled one keeps its real count: "stopped at 90 of 6,695" is the honest
+      // A cancelled run keeps its real count: "stopped at 90 of 6,695" is the honest
       // number, and rounding it up to the total would claim work it never did.
-      if (job) job.counting = false;
-      if (job && !job.error && !job.stopped) job.done = job.total;
-      if (onDone) { try { await onDone(snapshot()); } catch {} }
+      me.counting = false;
+      if (!me.error && !me.stopped) me.done = me.total;
+      me.finished = true;
+      if (onDone && job === me) { try { await onDone(snapshot()); } catch {} }
     }
   })();
 

@@ -90,6 +90,60 @@ function propertyFolderName(listing) {
   return parts.join(' | ');
 }
 
+// Find the property's folder, or make it. Pulled out of the delivery path so a folder
+// can be created for a property that has no photos yet: he asked whether his VA has to
+// open those by hand, and this is what says no.
+//
+// Reuses an existing folder rather than always creating, because Drive will happily
+// hold two folders with the same name and a second run would leave him a duplicate.
+async function ensureFolder(drive, folderName) {
+  let folderId = null, folderUrl = null;
+  try {
+    const found = await withTimeout(drive.files.list({
+      q: `name = '${folderName.replace(/'/g, "\\'")}'`
+         + ` and '${MASTER_ID}' in parents`
+         + ` and mimeType = 'application/vnd.google-apps.folder'`
+         + ` and trashed = false`,
+      fields: 'files(id, webViewLink)',
+      pageSize: 1,
+      supportsAllDrives: true, includeItemsFromAllDrives: true,
+    }), DRIVE_OP_TIMEOUT, 'find folder');
+    if (found.data.files && found.data.files.length) {
+      folderId = found.data.files[0].id;
+      folderUrl = found.data.files[0].webViewLink;
+    }
+  } catch (e) {
+    console.error('[drive] folder lookup failed, will create:', e.message);
+  }
+
+  if (!folderId) {
+    const folder = await withTimeout(drive.files.create({
+      requestBody: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [MASTER_ID] },
+      fields: 'id, webViewLink',
+      supportsAllDrives: true,
+    }), DRIVE_OP_TIMEOUT, 'create folder');
+    folderId = folder.data.id;
+    folderUrl = folder.data.webViewLink;
+    return { folderId, folderUrl, created: true };
+  }
+  return { folderId, folderUrl, created: false };
+}
+
+// One empty folder for a property, named the same way a delivered one would be. Used
+// by the bulk pass so a property with no photographs still has somewhere for them to
+// go, ready for him or the owner to drop them in.
+async function createFolderFor(listing) {
+  const drive = driveClient();
+  if (!drive || !MASTER_ID) return { error: 'Drive is not connected.' };
+  const name = propertyFolderName(listing);
+  try {
+    const r = await ensureFolder(drive, name);
+    return { ...r, name };
+  } catch (e) {
+    return { error: e.message || 'Could not create the folder.' };
+  }
+}
+
 async function deliverToDrive(listing, processedImages) {
   const folderName = propertyFolderName(listing);
   const manifest = processedImages.map((im, i) => ({
@@ -104,35 +158,7 @@ async function deliverToDrive(listing, processedImages) {
       // Reuse the property's existing folder if there is one. Drive happily creates
       // duplicate folders with the same name, so always creating meant a second run on
       // the same property left two folders of identical photos in his Drive.
-      let folderId = null, folderUrl = null;
-      try {
-        const found = await withTimeout(drive.files.list({
-          q: `name = '${folderName.replace(/'/g, "\\'")}'`
-             + ` and '${MASTER_ID}' in parents`
-             + ` and mimeType = 'application/vnd.google-apps.folder'`
-             + ` and trashed = false`,
-          fields: 'files(id, webViewLink)',
-          pageSize: 1,
-          supportsAllDrives: true, includeItemsFromAllDrives: true,
-        }), DRIVE_OP_TIMEOUT, 'find folder');
-        if (found.data.files && found.data.files.length) {
-          folderId = found.data.files[0].id;
-          folderUrl = found.data.files[0].webViewLink;
-          console.log(`[drive] reusing existing folder for ${folderName}`);
-        }
-      } catch (e) {
-        console.error('[drive] folder lookup failed, will create:', e.message);
-      }
-
-      if (!folderId) {
-        const folder = await withTimeout(drive.files.create({
-          requestBody: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [MASTER_ID] },
-          fields: 'id, webViewLink',
-          supportsAllDrives: true,
-        }), DRIVE_OP_TIMEOUT, 'create folder');
-        folderId = folder.data.id;
-        folderUrl = folder.data.webViewLink;
-      }
+      const { folderId, folderUrl } = await ensureFolder(drive, folderName);
 
       // Names already in the folder, so a re-run replaces rather than duplicates.
       const existingByName = new Map();
@@ -229,4 +255,5 @@ async function fetchDriveFile(fileId) {
   }
 }
 
-module.exports = { deliverToDrive, driveMode, fetchDriveFile, driveClient };
+module.exports = { deliverToDrive, driveMode, fetchDriveFile, driveClient,
+                   createFolderFor, propertyFolderName };

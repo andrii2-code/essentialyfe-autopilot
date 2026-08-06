@@ -157,6 +157,9 @@ async function renderSettings() {
   // Pick a job up again if one is still running — reloading the page or walking away
   // from settings must not lose sight of it.
   api('/import/photos').then(j => { if (j?.total) { photoJobMsg(j); if (j.running) watchPhotoJob(); else $('#imp-photos')?.classList.remove('hidden'); } }).catch(() => {});
+  // How many properties still have nowhere for their photos to go, so the button says
+  // what it will do before he presses it.
+  api('/drive-folders').then(j => { if (j) { foldMsg(j); if (j.running) watchFolderJob(); } }).catch(() => {});
   return renderAutomation().catch(e => console.error('automation:', e.message));
 }
 document.addEventListener('click', e => {
@@ -2079,6 +2082,78 @@ $('#btn-imp-photos-stop')?.addEventListener('click', async () => {
     btn.disabled = false;
   }
   btn.textContent = '✕ Stop fetching';   // the poll hides it once the job reports it stopped
+});
+
+// ---------- Drive folders for properties that have none ----------
+//
+// He asked whether his VA has to open these by hand. The app already makes a folder
+// when he likes a property, so the same thing runs across the rest.
+let foldPoll = null;
+
+function foldMsg(j) {
+  const el = $('#fold-msg'), bar = $('#fold-bar'), fill = $('#fold-fill');
+  const btn = $('#btn-folders'), stop = $('#btn-folders-stop');
+  if (!el) return;
+
+  if (j.driveMode && j.driveMode !== 'live') {
+    el.className = 'digest-msg';
+    el.textContent = 'Connect your Google Drive first and this can open the folders for you.';
+    if (btn) btn.disabled = true;
+    return;
+  }
+  if (btn) btn.disabled = false;
+
+  const bits = [];
+  if (j.running) {
+    bits.push(`Opening folders… ${j.done} of ${j.total}`);
+    if (j.created) bits.push(`${j.created} made`);
+    el.className = 'digest-msg';
+  } else if (j.total) {
+    bits.push(`${j.created} folder${j.created === 1 ? '' : 's'} opened`);
+    // Reused ones are not a failure and not a new folder: the property already had one
+    // in his Drive under the same name, so it was linked rather than duplicated.
+    if (j.reused) bits.push(`${j.reused} already existed and were linked`);
+    if (j.failed) bits.push(`${j.failed} could not be made${j.lastError ? ' (' + j.lastError + ')' : ''}`);
+    el.className = 'digest-msg ' + (j.failed ? 'err' : 'ok');
+  } else if (j.pending) {
+    // Say what pressing it will do, before he presses it.
+    bits.push(`${j.pending.toLocaleString()} propert${j.pending === 1 ? 'y has' : 'ies have'} no folder yet.`);
+    el.className = 'digest-msg';
+  } else {
+    bits.push('Every property has a folder.');
+    el.className = 'digest-msg ok';
+  }
+  el.textContent = bits.join(' · ');
+
+  if (bar) bar.classList.toggle('hidden', !j.total);
+  if (fill && j.total) fill.style.width = `${Math.round((j.done / j.total) * 100)}%`;
+  if (stop) stop.classList.toggle('hidden', !j.running);
+  if (btn) btn.classList.toggle('hidden', !!j.running);
+}
+
+function watchFolderJob() {
+  clearInterval(foldPoll);
+  foldPoll = setInterval(async () => {
+    try {
+      const j = await api('/drive-folders');
+      foldMsg(j);
+      if (!j.running) { clearInterval(foldPoll); foldPoll = null; }
+    } catch { clearInterval(foldPoll); foldPoll = null; }
+  }, 2000);
+}
+
+$('#btn-folders')?.addEventListener('click', async () => {
+  const btn = $('#btn-folders');
+  btn.disabled = true;
+  // Paint the response rather than waiting for the first poll two seconds later: a
+  // button that sits there doing nothing reads as a button that did not work.
+  try { foldMsg(await apiSend('POST', '/drive-folders', {})); watchFolderJob(); }
+  catch (e) { const el = $('#fold-msg'); if (el) { el.className = 'digest-msg err'; el.textContent = e.message; } }
+  btn.disabled = false;
+});
+
+$('#btn-folders-stop')?.addEventListener('click', async () => {
+  try { foldMsg(await apiSend('POST', '/drive-folders/stop', {})); } catch {}
 });
 
 // The subscription run: only the rows the lookup never reached.

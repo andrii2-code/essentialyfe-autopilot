@@ -208,6 +208,19 @@
             <button class="btn-ghost hidden" id="btn-imp-photos-retry">⤓ Fetch the ones waiting on credits</button>
           </div>
         </div>
+
+        <!-- Somewhere to put the photos for a property that has none yet. He asked
+             whether his VA has to open these by hand; this is what says no. -->
+        <div class="imp-photos" id="drive-folders">
+          <div class="imp-photos-t">Drive folders for properties with none</div>
+          <p class="lede" style="margin:4px 0 10px">A property gets its own Drive folder when you like it. For homes that are not ready yet, this opens an empty folder for each one so the photos have somewhere to go when they arrive. Properties whose photos already live in your own folder are left alone.</p>
+          <div class="imp-photos-bar hidden" id="fold-bar"><div class="imp-photos-fill" id="fold-fill"></div></div>
+          <div class="digest-msg" id="fold-msg"></div>
+          <div class="auto-inline" style="margin-top:8px">
+            <button class="btn-ghost" id="btn-folders">📁 Open the missing folders</button>
+            <button class="btn-ghost hidden" id="btn-folders-stop">✕ Stop</button>
+          </div>
+        </div>
       </div>
 
       <!-- Start over. Deliberately last, deliberately plain, and double-confirmed:

@@ -6,6 +6,7 @@ const importer = require('./import');
 const enrichPhotos = require('./photo-enrich');
 const drivePhotos = require('./drive-photos');
 const photoJob = require('./photo-job');
+const folderJob = require('./folder-job');
 const ical = require('./ical');
 const calendars = require('./calendars');
 const { runCollector, processApproved } = require('./pipeline');
@@ -746,6 +747,28 @@ app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
 // from what is still missing rather than from the beginning.
 app.post('/api/import/photos/stop', auth.requireAdmin, wrap(async (req, res) => {
   res.json(photoJob.stop() || { running: false, total: 0, done: 0 });
+}));
+
+// ---- Drive folders for properties that have none (admin only) ----
+//
+// He asked whether his VA has to open these by hand. No: the app already makes a folder
+// when a property is approved, so the same thing runs across the ones that have none.
+app.get('/api/drive-folders', auth.requireAuth, wrap(async (req, res) => {
+  const job = folderJob.status();
+  // How many are still missing one, so the button can say what it will do before he
+  // presses it rather than after.
+  const pending = (await q.withoutDriveFolder()).length;
+  res.json({ ...(job || { running: false, total: 0, done: 0 }), pending, driveMode: driveMode() });
+}));
+
+// Both replies carry driveMode, so the panel can paint the answer straight away rather
+// than waiting two seconds for the first poll.
+app.post('/api/drive-folders', auth.requireAdmin, wrap(async (req, res) => {
+  res.json({ ...(folderJob.start(q) || { running: false, total: 0, done: 0 }), driveMode: driveMode() });
+}));
+
+app.post('/api/drive-folders/stop', auth.requireAdmin, wrap(async (req, res) => {
+  res.json({ ...(folderJob.stop() || { running: false, total: 0, done: 0 }), driveMode: driveMode() });
 }));
 
 // ---- availability calendars ----

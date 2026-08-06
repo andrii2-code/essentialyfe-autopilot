@@ -1242,42 +1242,41 @@ function openDetail(l) {
 // What he sends an owner who has not handed over their link. Kept here so it is one
 // click from the property he is looking at: many owners will not send a link simply
 // because nobody told them where it lives, and it takes them half a minute.
+// Deliberately short. An owner skims, and a mailto: link is capped around 2,000
+// characters by most mail clients, so the long version would have been cut off in the
+// middle of the instructions.
+const OWNER_SUBJECT = 'Your calendar link';
 const OWNER_EMAIL = `Hi,
 
-To save us both the back and forth about which dates are open, your booking site can
-send me your availability automatically. It takes about thirty seconds to set up and
-you only ever do it once.
+Could you send me your calendar link, so your open dates update on their own? It takes about thirty seconds and you only do it once.
 
-What you send me is a calendar link. It shows which dates are taken and nothing else.
-It does not give me access to your account, I cannot change anything with it, and I
-cannot make or cancel a booking. If you ever want to stop it, you regenerate the link
-on your side and the old one goes dead.
+The link shows which dates are taken and nothing else. It gives no access to your account, and I cannot change anything or make a booking with it.
 
-Here is where to find it.
+Airbnb: Calendar, pick the listing, then Availability, Connect calendars, Export calendar.
 
-If you use Airbnb: open Airbnb on a computer and go to Calendar. Pick the listing. On
-the right hand side look for Availability, then Connect calendars, then Export
-calendar. Copy the link and send it to me.
+Vrbo: Calendar, pick the property, then Sync calendars or Export calendar.
 
-If you use Vrbo: open Vrbo and go to Calendar. Pick the property, then look for Sync
-calendars or Export calendar. Copy the export link and send it to me.
+Google Calendar: Settings, click the calendar for this property, then Integrate calendar, and copy the Secret address in iCal format.
 
-If you use Google Calendar: open Google Calendar on a computer, click the gear icon,
-then Settings. In the left column under Settings for my calendars, click the calendar
-for this property. Scroll to Integrate calendar and copy the Secret address in iCal
-format. Please send me that one rather than making the calendar public.
+Anything else: look for Export calendar, iCal link or Sync calendars in the calendar settings.
 
-If you use something else: look for Export calendar, iCal link, or Sync calendars in
-the calendar or availability settings. If you cannot find it, send me a screenshot of
-that page and I will point at it.
+It is a long address ending in .ics. If it starts with webcal instead of https, that is fine.
 
-The link will be a long web address ending in .ics. It might start with webcal instead
-of https, which is fine, both work.
-
-Once I have it, your availability updates on its own and I will stop asking.
+If you cannot find it, send me a screenshot of that page and I will point at it.
 
 Thank you,
 Avi`;
+
+// His sheet keeps contacts as free text: a name, often a phone number, sometimes an
+// email in the middle of it. 385 of his 6,735 properties carry one, and where there is
+// one the mail client can be opened already addressed rather than him hunting for it.
+function ownerEmailAddress(l) {
+  const hay = [l.contact1, l.contact2, l.contact3, l.owner_info].filter(Boolean).join(' ');
+  const m = hay.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+  if (!m) return null;
+  // Trailing punctuation from "name, a@b.com, 323-..." is not part of the address.
+  return m[0].replace(/[.,;]+$/, '');
+}
 
 const DAY_STATE = {
   booked:      { label: 'Booked',      cls: 'booked' },
@@ -1367,7 +1366,7 @@ async function mountAvailability(listing) {
                  value="${!data.calendars?.length && /^https?:|^webcal:/i.test(listing.ical_url || '') ? esc(listing.ical_url) : ''}">
           <button class="btn-ghost" id="cal-add">Add calendar</button>
           ${data.calendars?.length ? `<button class="btn-ghost" id="cal-sync">↻ Refresh now</button>` : ''}
-          <button class="btn-ghost" id="cal-ask">✉ Ask the owner</button>
+          <button class="btn-ghost" id="cal-ask">✉ ${ownerEmailAddress(listing) ? 'Email the owner' : 'Ask the owner'}</button>
         </div>
         <div class="digest-msg" id="cal-msg"></div>
       </div>
@@ -1415,7 +1414,7 @@ async function mountAvailability(listing) {
 
     const msgEl = $('#cal-msg');
     if (msgEl && lastMsg.text) { msgEl.className = 'digest-msg ' + lastMsg.cls; msgEl.textContent = lastMsg.text; }
-    wireAvailability(id, draw, (text, cls = '') => {
+    wireAvailability(listing, draw, (text, cls = '') => {
       lastMsg = { text, cls };
       const el = $('#cal-msg');
       if (el) { el.className = 'digest-msg ' + cls; el.textContent = text; }
@@ -1432,7 +1431,8 @@ async function mountAvailability(listing) {
   draw();
 }
 
-function wireAvailability(id, draw, msg) {
+function wireAvailability(listing, draw, msg) {
+  const id = listing.id;
   const host = $('#dt-availability');
   const reload = () => host._reload && host._reload();
 
@@ -1452,14 +1452,24 @@ function wireAvailability(id, draw, msg) {
     $('#cal-add') && ($('#cal-add').disabled = false);
   });
 
-  // The owner email, ready to paste. Copying beats a mailto: link because he sends
-  // these from his own client with his own signature.
+  // Open his own mail client, already addressed and written, when the property carries
+  // an email. Copying to the clipboard still leaves him to find the address and paste
+  // twice, and most of these owners are in the sheet already.
   $('#cal-ask')?.addEventListener('click', async () => {
+    const to = ownerEmailAddress(listing || {});
+    if (to) {
+      window.location.href = `mailto:${encodeURIComponent(to)}`
+        + `?subject=${encodeURIComponent(OWNER_SUBJECT)}`
+        + `&body=${encodeURIComponent(OWNER_EMAIL)}`;
+      msg(`Opening your email to ${to}.`, 'ok');
+      return;
+    }
+    // No address on this property, so hand him the text to paste wherever he reaches
+    // the owner: his sheet often has only a name and a phone number.
     try {
       await navigator.clipboard.writeText(OWNER_EMAIL);
-      msg('The email is on your clipboard. Paste it to the owner and ask for the link.', 'ok');
+      msg('No email on this property, so the message is on your clipboard. Send it however you reach them.', 'ok');
     } catch {
-      // Clipboard access can be refused; showing the text still gets him there.
       window.prompt('Copy this and send it to the owner:', OWNER_EMAIL);
     }
   });

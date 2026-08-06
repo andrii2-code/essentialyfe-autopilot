@@ -11,49 +11,39 @@ automatically. The owner has to generate it, and it takes about thirty seconds.
 
 ## The email
 
-Subject: A quick way to keep your calendar in sync
+You do not need to copy this by hand. Open any property, go to Availability, and press
+"Email the owner". If that property has an email in its contact fields your mail client
+opens already addressed and written. If it does not, the same text goes to your
+clipboard so you can send it however you reach them.
 
-Hi [name],
+It is deliberately short. An owner skims, and mail clients cut a pre-filled message off
+at around two thousand characters.
 
-To save us both the back and forth about which dates are open, your booking site can
-send me your availability automatically. It takes about thirty seconds to set up and
-you only ever do it once.
+Subject: Your calendar link
 
-What you send me is a calendar link. It shows which dates are taken and nothing else.
-It does not give me access to your account, I cannot change anything with it, and I
-cannot make or cancel a booking. If you ever want to stop it, you regenerate the link
-on your side and the old one goes dead.
+Hi,
 
-Here is where to find it.
+Could you send me your calendar link, so your open dates update on their own? It takes
+about thirty seconds and you only do it once.
 
-**If you use Airbnb**
+The link shows which dates are taken and nothing else. It gives no access to your
+account, and I cannot change anything or make a booking with it.
 
-Open Airbnb on a computer and go to Calendar. Pick the listing. On the right hand side
-look for Availability, then Connect calendars, then Export calendar. Copy the link it
-gives you and send it to me.
+Airbnb: Calendar, pick the listing, then Availability, Connect calendars, Export
+calendar.
 
-**If you use Vrbo**
+Vrbo: Calendar, pick the property, then Sync calendars or Export calendar.
 
-Open Vrbo and go to Calendar. Pick the property, then look for Sync calendars or Export
-calendar. Copy the export link and send it to me.
+Google Calendar: Settings, click the calendar for this property, then Integrate
+calendar, and copy the Secret address in iCal format.
 
-**If you use Google Calendar**
+Anything else: look for Export calendar, iCal link or Sync calendars in the calendar
+settings.
 
-Open Google Calendar on a computer. Click the gear icon, then Settings. In the left
-column under Settings for my calendars, click the calendar you use for this property.
-Scroll to Integrate calendar and copy the Secret address in iCal format. Please send me
-that one rather than making the calendar public.
+It is a long address ending in .ics. If it starts with webcal instead of https, that is
+fine.
 
-**If you use something else**
-
-Most booking sites have this. Look for anything called Export calendar, iCal link, or
-Sync calendars, usually in the calendar or availability settings. If you cannot find
-it, send me a screenshot of your calendar settings page and I will point at it.
-
-The link will be a long web address ending in .ics. It might start with webcal instead
-of https, which is fine, both work.
-
-Once I have it, your availability updates on its own and I will stop asking.
+If you cannot find it, send me a screenshot of that page and I will point at it.
 
 Thank you,
 Avi

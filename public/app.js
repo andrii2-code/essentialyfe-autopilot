@@ -1239,6 +1239,46 @@ function openDetail(l) {
 //
 // Available and Booked come from the feeds. On Hold and Maintenance are not published
 // by any provider, so those two he sets himself here.
+// What he sends an owner who has not handed over their link. Kept here so it is one
+// click from the property he is looking at: many owners will not send a link simply
+// because nobody told them where it lives, and it takes them half a minute.
+const OWNER_EMAIL = `Hi,
+
+To save us both the back and forth about which dates are open, your booking site can
+send me your availability automatically. It takes about thirty seconds to set up and
+you only ever do it once.
+
+What you send me is a calendar link. It shows which dates are taken and nothing else.
+It does not give me access to your account, I cannot change anything with it, and I
+cannot make or cancel a booking. If you ever want to stop it, you regenerate the link
+on your side and the old one goes dead.
+
+Here is where to find it.
+
+If you use Airbnb: open Airbnb on a computer and go to Calendar. Pick the listing. On
+the right hand side look for Availability, then Connect calendars, then Export
+calendar. Copy the link and send it to me.
+
+If you use Vrbo: open Vrbo and go to Calendar. Pick the property, then look for Sync
+calendars or Export calendar. Copy the export link and send it to me.
+
+If you use Google Calendar: open Google Calendar on a computer, click the gear icon,
+then Settings. In the left column under Settings for my calendars, click the calendar
+for this property. Scroll to Integrate calendar and copy the Secret address in iCal
+format. Please send me that one rather than making the calendar public.
+
+If you use something else: look for Export calendar, iCal link, or Sync calendars in
+the calendar or availability settings. If you cannot find it, send me a screenshot of
+that page and I will point at it.
+
+The link will be a long web address ending in .ics. It might start with webcal instead
+of https, which is fine, both work.
+
+Once I have it, your availability updates on its own and I will stop asking.
+
+Thank you,
+Avi`;
+
 const DAY_STATE = {
   booked:      { label: 'Booked',      cls: 'booked' },
   blocked:     { label: 'Blocked',     cls: 'blocked' },
@@ -1327,6 +1367,7 @@ async function mountAvailability(listing) {
                  value="${!data.calendars?.length && /^https?:|^webcal:/i.test(listing.ical_url || '') ? esc(listing.ical_url) : ''}">
           <button class="btn-ghost" id="cal-add">Add calendar</button>
           ${data.calendars?.length ? `<button class="btn-ghost" id="cal-sync">↻ Refresh now</button>` : ''}
+          <button class="btn-ghost" id="cal-ask">✉ Ask the owner</button>
         </div>
         <div class="digest-msg" id="cal-msg"></div>
       </div>
@@ -1409,6 +1450,18 @@ function wireAvailability(id, draw, msg) {
       await reload();
     } catch (e) { msg(e.message, 'err'); }
     $('#cal-add') && ($('#cal-add').disabled = false);
+  });
+
+  // The owner email, ready to paste. Copying beats a mailto: link because he sends
+  // these from his own client with his own signature.
+  $('#cal-ask')?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(OWNER_EMAIL);
+      msg('The email is on your clipboard. Paste it to the owner and ask for the link.', 'ok');
+    } catch {
+      // Clipboard access can be refused; showing the text still gets him there.
+      window.prompt('Copy this and send it to the owner:', OWNER_EMAIL);
+    }
   });
 
   $('#cal-sync')?.addEventListener('click', async () => {

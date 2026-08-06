@@ -22,6 +22,7 @@
 const { q } = require('./db');
 const { runCollector } = require('./pipeline');
 const { sendDigest } = require('./digest');
+const calendars = require('./calendars');
 
 const TICK_MS = 60 * 1000;
 
@@ -123,6 +124,28 @@ async function runDigestPass() {
   return r;
 }
 
+// ---- availability calendars ----
+// Refreshed a few times a day rather than nightly: a booking that came in this morning
+// should not still show the house as free this afternoon. Cheap to do, since a feed is
+// a few KB and nothing is charged per read.
+const CALENDAR_EVERY_MIN = 240;
+
+async function calendarsDue() {
+  const last = await q.getSetting('calendars.lastSyncAt', null);
+  if (!last) return true;
+  return (Date.now() - new Date(last).getTime()) / 60000 >= CALENDAR_EVERY_MIN;
+}
+
+async function runCalendarPass() {
+  // Stamped first, so a slow or failing pass cannot make every tick try again.
+  await q.setSetting('calendars.lastSyncAt', new Date().toISOString());
+  const r = await calendars.syncAll(q);
+  console.log(`[scheduler] calendars: ${r.synced}/${r.calendars} read`
+    + `, ${r.events} dates blocked`
+    + (r.failed ? `, ${r.failed} could not be reached` : ''));
+  return r;
+}
+
 // ---- the tick ----
 async function tick() {
   if (running) return;             // a slow collector pass must not stack up
@@ -130,6 +153,7 @@ async function tick() {
   try {
     if (await collectorDue()) await runCollectorPass();
     if (await digestDue()) await runDigestPass();
+    if (await calendarsDue()) await runCalendarPass();
     lastError = null;
   } catch (e) {
     // Never let a bad pass kill the timer — the next tick tries again.

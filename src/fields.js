@@ -73,10 +73,11 @@ const FIELDS = [
   // permit)", and a strict HH:MM would silently discard those on import.
   { key: 'event_end_time',               label: 'Event End Time',                   type: 'text', group: 'Availability' },
   { key: 'service_schedule',             label: 'Service Schedule',                 type: 'text', group: 'Availability' },
-  // The property's calendar feed (AirBnb, Vrbo, Google Calendar all publish one).
-  // Holding the URL is the first half of the iCal work; reading the feed to show
-  // booked dates is the second, and is a separate piece.
-  { key: 'ical_url',                     label: 'iCal Link',                        type: 'text', group: 'Availability' },
+  // Superseded by the Availability panel, which reads calendars rather than only
+  // storing a link, and holds several per property because a home is often on Airbnb
+  // and Vrbo at once. Kept so a link typed here before is not lost: the panel offers
+  // it as the first thing to add.
+  { key: 'ical_url',                     label: 'iCal Link (old)',                  type: 'text', group: 'Availability' },
 
   // --- Space -------------------------------------------------------------------
   { key: 'available_space_off_limits', label: 'Available Space / Off Limits', type: 'textarea', group: 'Space' },

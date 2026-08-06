@@ -6,6 +6,8 @@ const importer = require('./import');
 const enrichPhotos = require('./photo-enrich');
 const drivePhotos = require('./drive-photos');
 const photoJob = require('./photo-job');
+const ical = require('./ical');
+const calendars = require('./calendars');
 const { runCollector, processApproved } = require('./pipeline');
 const { driveMode, fetchDriveFile } = require('./drive');
 const auth = require('./auth');
@@ -744,6 +746,66 @@ app.post('/api/import/photos', auth.requireAdmin, wrap(async (req, res) => {
 // from what is still missing rather than from the beginning.
 app.post('/api/import/photos/stop', auth.requireAdmin, wrap(async (req, res) => {
   res.json(photoJob.stop() || { running: false, total: 0, done: 0 });
+}));
+
+// ---- availability calendars ----
+//
+// He pastes a link from Airbnb, Vrbo, Google or Giggster and the dates get blocked. A
+// property can carry several at once, because a home is often on two sites, and they
+// are merged into one answer per day.
+//
+// Available and Booked come from the feeds. On Hold and Maintenance are not published
+// by any provider, so those are his to set and are kept in their own table where a
+// sync cannot wipe them.
+const VALID_BLOCK_STATES = new Set(['hold', 'maintenance']);
+const isDay = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+
+app.get('/api/listing/:id/availability', auth.requireAuth, wrap(async (req, res) => {
+  const { from, to } = req.query;
+  res.json(await calendars.availability(q, req.params.id, {
+    from: isDay(from) ? from : null, to: isDay(to) ? to : null,
+  }));
+}));
+
+app.post('/api/listing/:id/calendars', auth.requireAuth, wrap(async (req, res) => {
+  const url = ical.normaliseUrl(req.body?.url);
+  if (!url) return res.status(400).json({ error: 'That is not a calendar link. It should start with https:// or webcal://' });
+
+  // Read it BEFORE saving. A link that cannot be read is worth telling him about now,
+  // while he still has the owner's email open, rather than silently storing a dead
+  // feed that quietly blocks nothing.
+  const probe = await ical.fetchIcs(url);
+  if (probe.error) return res.status(400).json({ error: probe.error });
+
+  const label = String(req.body?.label || '').trim() || calendars.labelFor(url, probe.calName);
+  const cal = await q.addCalendar(req.params.id, url, label);
+  const synced = await calendars.syncOne(q, { ...cal, listing_id: req.params.id });
+  res.json({ calendar: cal, ...synced });
+}));
+
+app.delete('/api/listing/:id/calendars/:calId', auth.requireAuth, wrap(async (req, res) => {
+  await q.removeCalendar(req.params.id, req.params.calId);
+  res.json({ ok: true });
+}));
+
+// Refresh now, rather than waiting for the nightly pass.
+app.post('/api/listing/:id/calendars/sync', auth.requireAuth, wrap(async (req, res) => {
+  res.json({ results: await calendars.syncListing(q, req.params.id) });
+}));
+
+// His own On Hold / Maintenance.
+app.post('/api/listing/:id/blocks', auth.requireAuth, wrap(async (req, res) => {
+  const { start, end, state, note } = req.body || {};
+  if (!isDay(start)) return res.status(400).json({ error: 'Choose a start date.' });
+  const finish = isDay(end) ? end : start;
+  if (finish < start) return res.status(400).json({ error: 'The end date is before the start date.' });
+  if (!VALID_BLOCK_STATES.has(state)) return res.status(400).json({ error: 'Choose On Hold or Maintenance.' });
+  res.json(await q.addManualBlock(req.params.id, { start, end: finish, state, note }));
+}));
+
+app.delete('/api/listing/:id/blocks/:blockId', auth.requireAuth, wrap(async (req, res) => {
+  await q.removeManualBlock(req.params.id, req.params.blockId);
+  res.json({ ok: true });
 }));
 
 // ---- reset (admin only) ----

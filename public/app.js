@@ -1212,6 +1212,11 @@ function openDetail(l) {
           : (state.summary?.driveMode === 'live' ? '' : `<span class="dr-pending" title="Connecting the service account to your master folder makes this live — no code change.">Prepared, not yet uploaded</span>`)}
       </div>`}
 
+      <!-- Availability. Calendar links are read in and merged; a home on Airbnb and
+           Vrbo at once shows one answer per day. -->
+      <div class="dt-section-t">Availability <span class="muted" style="font-weight:400;font-size:12px">— calendars are read every few hours</span></div>
+      <div id="dt-availability"></div>
+
       <div class="dt-section-t">Your fields <span class="muted" style="font-weight:400;font-size:12px">— editable, saved to this property</span></div>
       <div id="dt-editable"></div>
 
@@ -1223,6 +1228,221 @@ function openDetail(l) {
   wireGallery(l, shots);
   wireDecision(l);
   mountEditableFields(l);
+  mountAvailability(l);
+}
+
+// ---------- availability ----------
+//
+// He pastes a calendar link from Airbnb, Vrbo, Google or Giggster and the dates get
+// blocked. Several can sit on one property, because a home is often on two sites at
+// once, and they are merged into one answer per day.
+//
+// Available and Booked come from the feeds. On Hold and Maintenance are not published
+// by any provider, so those two he sets himself here.
+const DAY_STATE = {
+  booked:      { label: 'Booked',      cls: 'booked' },
+  blocked:     { label: 'Blocked',     cls: 'blocked' },
+  hold:        { label: 'On Hold',     cls: 'hold' },
+  maintenance: { label: 'Maintenance', cls: 'maint' },
+};
+
+let availMonth = null;   // first of the month currently shown
+
+// Null rather than the words "Invalid Date". An unparseable timestamp is worth saying
+// nothing about; printing it at him is worse than leaving it out.
+function readableDate(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d) ? null : d.toLocaleDateString();
+}
+
+function monthStart(day) { return day.slice(0, 8) + '01'; }
+function shiftMonth(day, n) {
+  const [y, m] = day.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + n, 1));
+  return d.toISOString().slice(0, 10);
+}
+function monthLabel(day) {
+  const [y, m] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+function daysInMonth(day) {
+  const [y, m] = day.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+async function mountAvailability(listing) {
+  const host = $('#dt-availability');
+  if (!host) return;
+  const id = listing.id;
+  host.innerHTML = `<div class="muted" style="font-size:12px;padding:6px 0">Loading availability…</div>`;
+
+  let data;
+  try {
+    data = await api(`/listing/${id}/availability`);
+  } catch (e) {
+    host.innerHTML = `<div class="fld-status err">Could not load availability. ${esc(e.message)}</div>`;
+    return;
+  }
+  if (!availMonth) availMonth = monthStart(data.from);
+
+  const byDay = new Map(data.days.map(d => [d.date, d]));
+  // Kept across redraws. Adding a calendar reloads the panel, and without this the
+  // "Airbnb added, 3 dates blocked" confirmation was wiped the instant it appeared.
+  let lastMsg = { text: '', cls: '' };
+  const draw = () => {
+    const first = availMonth;
+    const total = daysInMonth(first);
+    // Which weekday the 1st falls on, so the grid lines up under the right heading.
+    const [y, m] = first.split('-').map(Number);
+    const lead = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+
+    const cells = [];
+    for (let i = 0; i < lead; i++) cells.push('<div class="cal-cell empty"></div>');
+    for (let d = 1; d <= total; d++) {
+      const date = `${first.slice(0, 8)}${String(d).padStart(2, '0')}`;
+      const info = byDay.get(date);
+      const st = info ? DAY_STATE[info.state] : null;
+      const title = info
+        ? `${st ? st.label : info.state}${info.via ? ' · ' + info.via : ''}${info.note ? ' · ' + info.note : ''}${info.summary ? ' · ' + info.summary : ''}`
+        : 'Available';
+      cells.push(`<div class="cal-cell${st ? ' ' + st.cls : ''}" title="${esc(title)}" data-date="${date}"><span>${d}</span></div>`);
+    }
+
+    const feeds = (data.calendars || []).map(c => `
+      <div class="cal-feed">
+        <span class="cal-feed-name">${esc(c.label || 'Calendar')}</span>
+        <span class="cal-feed-sub">${c.last_error
+          ? `<span class="cal-err">${esc(c.last_error)}</span>`
+          : `${c.event_count || 0} date${c.event_count === 1 ? '' : 's'} blocked${
+              readableDate(c.last_synced_at) ? ' · read ' + readableDate(c.last_synced_at) : ''}`}</span>
+        <button class="row-edit" data-cal-remove="${c.id}">Remove</button>
+      </div>`).join('');
+
+    host.innerHTML = `
+      <div class="cal-feeds">
+        ${feeds || `<div class="muted" style="font-size:12px">No calendar linked yet. Paste an Airbnb, Vrbo, Google or Giggster link below and the booked dates will be blocked here.</div>`}
+        <div class="cal-add">
+          <input class="fld-input" id="cal-url" placeholder="https://www.airbnb.com/calendar/ical/… or webcal://…"
+                 value="${!data.calendars?.length && /^https?:|^webcal:/i.test(listing.ical_url || '') ? esc(listing.ical_url) : ''}">
+          <button class="btn-ghost" id="cal-add">Add calendar</button>
+          ${data.calendars?.length ? `<button class="btn-ghost" id="cal-sync">↻ Refresh now</button>` : ''}
+        </div>
+        <div class="digest-msg" id="cal-msg"></div>
+      </div>
+
+      <div class="cal-head">
+        <button class="row-edit" id="cal-prev">←</button>
+        <b>${esc(monthLabel(first))}</b>
+        <button class="row-edit" id="cal-next">→</button>
+        <span class="cal-key">
+          <i class="k-free"></i>Available
+          <i class="k-booked"></i>Booked
+          <i class="k-blocked"></i>Blocked
+          <i class="k-hold"></i>On Hold
+          <i class="k-maint"></i>Maintenance
+        </span>
+      </div>
+      <div class="cal-grid">
+        ${['S','M','T','W','T','F','S'].map(d => `<div class="cal-dow">${d}</div>`).join('')}
+        ${cells.join('')}
+      </div>
+
+      <!-- On Hold and Maintenance are not in any feed, from any provider, so they are
+           his to set. Kept apart from the feeds so a refresh cannot wipe them. -->
+      <div class="cal-manual">
+        <span class="fld-l">Mark dates yourself</span>
+        <div class="cal-manual-row">
+          <input class="fld-input" type="date" id="blk-from">
+          <span class="muted">to</span>
+          <input class="fld-input" type="date" id="blk-to">
+          <select class="fld-input" id="blk-state" style="width:auto">
+            <option value="hold">On Hold</option>
+            <option value="maintenance">Maintenance</option>
+          </select>
+          <input class="fld-input" id="blk-note" placeholder="Note (optional)">
+          <button class="btn-ghost" id="blk-add">Add</button>
+        </div>
+        ${(data.blocks || []).map(b => `
+          <div class="cal-block">
+            <span class="pill ${b.state === 'hold' ? 'hold' : 'maint'}">${DAY_STATE[b.state]?.label || b.state}</span>
+            <span>${esc(b.start)}${b.end !== b.start ? ' → ' + esc(b.end) : ''}</span>
+            ${b.note ? `<span class="muted">${esc(b.note)}</span>` : ''}
+            <button class="row-edit" data-blk-remove="${b.id}">Remove</button>
+          </div>`).join('')}
+      </div>`;
+
+    const msgEl = $('#cal-msg');
+    if (msgEl && lastMsg.text) { msgEl.className = 'digest-msg ' + lastMsg.cls; msgEl.textContent = lastMsg.text; }
+    wireAvailability(id, draw, (text, cls = '') => {
+      lastMsg = { text, cls };
+      const el = $('#cal-msg');
+      if (el) { el.className = 'digest-msg ' + cls; el.textContent = text; }
+    });
+  };
+
+  const reload = async () => {
+    try { data = await api(`/listing/${id}/availability`); } catch { return; }
+    byDay.clear();
+    for (const d of data.days) byDay.set(d.date, d);
+    draw();
+  };
+  host._reload = reload;
+  draw();
+}
+
+function wireAvailability(id, draw, msg) {
+  const host = $('#dt-availability');
+  const reload = () => host._reload && host._reload();
+
+  $('#cal-prev')?.addEventListener('click', () => { availMonth = shiftMonth(availMonth, -1); draw(); });
+  $('#cal-next')?.addEventListener('click', () => { availMonth = shiftMonth(availMonth, 1); draw(); });
+
+  $('#cal-add')?.addEventListener('click', async () => {
+    const url = $('#cal-url').value.trim();
+    if (!url) return msg('Paste the calendar link first.', 'err');
+    $('#cal-add').disabled = true;
+    msg('Reading the calendar…');
+    try {
+      const r = await apiSend('POST', `/listing/${id}/calendars`, { url });
+      msg(`${r.calendar.label} added — ${r.events} date${r.events === 1 ? '' : 's'} blocked.`, 'ok');
+      await reload();
+    } catch (e) { msg(e.message, 'err'); }
+    $('#cal-add') && ($('#cal-add').disabled = false);
+  });
+
+  $('#cal-sync')?.addEventListener('click', async () => {
+    msg('Refreshing…');
+    try {
+      const r = await apiSend('POST', `/listing/${id}/calendars/sync`, {});
+      const bad = (r.results || []).filter(x => x.error);
+      msg(bad.length
+        ? `${bad.length} calendar${bad.length === 1 ? '' : 's'} could not be read: ${bad.map(b => b.error).join(' ')}`
+        : `Up to date — ${(r.results || []).reduce((n, x) => n + (x.events || 0), 0)} dates blocked.`,
+        bad.length ? 'err' : 'ok');
+      await reload();
+    } catch (e) { msg(e.message, 'err'); }
+  });
+
+  host.querySelectorAll('[data-cal-remove]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Remove this calendar? The dates it blocked will be freed.')) return;
+    try { await apiSend('DELETE', `/listing/${id}/calendars/${b.dataset.calRemove}`); await reload(); }
+    catch (e) { msg(e.message, 'err'); }
+  }));
+
+  $('#blk-add')?.addEventListener('click', async () => {
+    const start = $('#blk-from').value, end = $('#blk-to').value || $('#blk-from').value;
+    if (!start) return msg('Choose a start date.', 'err');
+    try {
+      await apiSend('POST', `/listing/${id}/blocks`, { start, end, state: $('#blk-state').value, note: $('#blk-note').value.trim() });
+      await reload();
+    } catch (e) { msg(e.message, 'err'); }
+  });
+
+  host.querySelectorAll('[data-blk-remove]').forEach(b => b.addEventListener('click', async () => {
+    try { await apiSend('DELETE', `/listing/${id}/blocks/${b.dataset.blkRemove}`); await reload(); }
+    catch (e) { msg(e.message, 'err'); }
+  }));
 }
 
 // Clicking any photo — or "View all" — opens the full set. Arrow keys and Escape work,

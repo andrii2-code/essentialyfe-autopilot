@@ -174,6 +174,48 @@ function init() {
       ALTER TABLE listings ADD COLUMN IF NOT EXISTS photo_checked_at TIMESTAMPTZ;
     `);
 
+    // Availability. A property can carry several calendars at once, because a home is
+    // often listed on Airbnb and Vrbo together and he asked for those to be merged.
+    // The feed rows are replaced wholesale on every sync; the blocks HE sets are in
+    // their own table so a sync can never wipe them.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS property_calendars (
+        id BIGSERIAL PRIMARY KEY,
+        listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+        url TEXT NOT NULL,
+        label TEXT,
+        last_synced_at TIMESTAMPTZ,
+        last_error TEXT,
+        event_count INTEGER DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE (listing_id, url)
+      );
+      CREATE TABLE IF NOT EXISTS calendar_events (
+        id BIGSERIAL PRIMARY KEY,
+        listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+        calendar_id BIGINT NOT NULL REFERENCES property_calendars(id) ON DELETE CASCADE,
+        starts_on DATE NOT NULL,
+        ends_on DATE NOT NULL,
+        state TEXT NOT NULL,
+        summary TEXT,
+        uid TEXT
+      );
+      -- His own On Hold and Maintenance. No provider publishes either, so these can
+      -- only come from him, and they outrank anything a feed says.
+      CREATE TABLE IF NOT EXISTS calendar_blocks (
+        id BIGSERIAL PRIMARY KEY,
+        listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+        starts_on DATE NOT NULL,
+        ends_on DATE NOT NULL,
+        state TEXT NOT NULL,
+        note TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS cal_events_listing_idx ON calendar_events (listing_id, starts_on);
+      CREATE INDEX IF NOT EXISTS cal_blocks_listing_idx ON calendar_blocks (listing_id, starts_on);
+      CREATE INDEX IF NOT EXISTS cal_feeds_listing_idx  ON property_calendars (listing_id);
+    `);
+
     // The property table sorts and filters on these. Without them every page he turns
     // sorts all 6,700-odd rows from scratch, and every filter reads the whole table.
     await pool.query(`
@@ -578,6 +620,94 @@ const q = {
        WHERE (photo_urls IS NULL OR photo_urls = '' OR photo_urls = '[]')
          AND (address IS NOT NULL OR street_line IS NOT NULL)
        ORDER BY (tier IS NULL), id`);
+    return rows;
+  },
+
+  // ---- availability ----------------------------------------------------------
+  // A date is stored as a DATE and read back as YYYY-MM-DD. Letting pg hand these
+  // over as Date objects is how a booking that starts on the 3rd ends up showing as
+  // the 2nd for anyone west of UTC, which is everyone here.
+  async calendarsFor(listingId) {
+    const { rows } = await pool.query(
+      // Formatted as UTC with a trailing Z. Postgres's OF gives "+00", which is not a
+      // valid ISO offset, and new Date() on it returns Invalid Date — which is exactly
+      // what the panel printed where the last-read time should have been.
+      `SELECT id, url, label, event_count,
+              to_char(last_synced_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_synced_at,
+              last_error
+         FROM property_calendars WHERE listing_id = $1 ORDER BY id`, [listingId]);
+    return rows;
+  },
+
+  async addCalendar(listingId, url, label) {
+    const { rows } = await pool.query(
+      `INSERT INTO property_calendars (listing_id, url, label) VALUES ($1,$2,$3)
+       ON CONFLICT (listing_id, url) DO UPDATE SET label = COALESCE(EXCLUDED.label, property_calendars.label)
+       RETURNING id, url, label`, [listingId, url, label || null]);
+    return rows[0];
+  },
+
+  async removeCalendar(listingId, calId) {
+    await pool.query(`DELETE FROM property_calendars WHERE id = $1 AND listing_id = $2`, [calId, listingId]);
+  },
+
+  // One feed's worth of dates, replaced rather than merged: a booking cancelled at the
+  // source has to disappear here too, and appending would keep it forever.
+  async replaceCalendarEvents(listingId, calId, events, error) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM calendar_events WHERE calendar_id = $1`, [calId]);
+      for (const e of events) {
+        await client.query(
+          `INSERT INTO calendar_events (listing_id, calendar_id, starts_on, ends_on, state, summary, uid)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [listingId, calId, e.start, e.end, e.state || 'booked', e.summary || null, e.uid || null]);
+      }
+      await client.query(
+        `UPDATE property_calendars SET last_synced_at = now(), last_error = $2, event_count = $3 WHERE id = $1`,
+        [calId, error || null, events.length]);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; }
+    finally { client.release(); }
+  },
+
+  async calendarEvents(listingId) {
+    const { rows } = await pool.query(
+      `SELECT e.id, to_char(e.starts_on,'YYYY-MM-DD') AS start,
+              to_char(e.ends_on,'YYYY-MM-DD') AS end,
+              e.state, e.summary, c.label AS via
+         FROM calendar_events e JOIN property_calendars c ON c.id = e.calendar_id
+        WHERE e.listing_id = $1 ORDER BY e.starts_on`, [listingId]);
+    return rows;
+  },
+
+  async manualBlocks(listingId) {
+    const { rows } = await pool.query(
+      `SELECT id, to_char(starts_on,'YYYY-MM-DD') AS start,
+              to_char(ends_on,'YYYY-MM-DD') AS end, state, note
+         FROM calendar_blocks WHERE listing_id = $1 ORDER BY starts_on`, [listingId]);
+    return rows;
+  },
+
+  async addManualBlock(listingId, { start, end, state, note }) {
+    const { rows } = await pool.query(
+      `INSERT INTO calendar_blocks (listing_id, starts_on, ends_on, state, note)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, to_char(starts_on,'YYYY-MM-DD') AS start,
+                 to_char(ends_on,'YYYY-MM-DD') AS end, state, note`,
+      [listingId, start, end, state, note || null]);
+    return rows[0];
+  },
+
+  async removeManualBlock(listingId, blockId) {
+    await pool.query(`DELETE FROM calendar_blocks WHERE id = $1 AND listing_id = $2`, [blockId, listingId]);
+  },
+
+  // Every calendar in the app, for the nightly refresh.
+  async allCalendars() {
+    const { rows } = await pool.query(
+      `SELECT id, listing_id, url, label FROM property_calendars ORDER BY COALESCE(last_synced_at, 'epoch') ASC`);
     return rows;
   },
 
